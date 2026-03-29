@@ -1,0 +1,21 @@
+
+# Notebooks
+*.ipynb
+
+# Source data
+Source Data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
