@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 import keyring
 
 # .env inladen vanuit de projectroot (ook als de app vanuit een submap wordt gestart)
+# __file__ is scripts/config.py → parent = scripts/ → parent.parent = projectroot
 _ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_ROOT / ".env")
 
@@ -53,6 +54,10 @@ BATTERY_SN    = os.environ["BATTERY_SN"]
 
 LAT = float(os.environ["LAT"])
 LON = float(os.environ["LON"])
+
+PANEL_TILT    = float(os.environ.get("PANEL_TILT",    35))     # graden van horizontaal
+PANEL_AZIMUTH = float(os.environ.get("PANEL_AZIMUTH", 292.5))  # kompasbearing: 0=Noord, 270=West, WNW=292.5
+# .get() met standaardwaarden zodat paneelinstellingen optioneel zijn in .env
 
 SOLAR_API_URL   = os.environ["SOLAR_API_URL"]
 BATTERY_API_URL = os.environ["BATTERY_API_URL"]

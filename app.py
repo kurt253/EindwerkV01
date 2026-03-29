@@ -27,6 +27,7 @@ st.markdown(
 st.divider()
 
 # Snelle status: hoeveel lokale bestanden beschikbaar?
+# Import binnen try-blok zodat een ontbrekende .env of secrets de startpagina niet crasht
 try:
     from scripts import solar_logs, battery
 

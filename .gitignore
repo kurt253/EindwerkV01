@@ -5,6 +5,9 @@
 # Source data
 Source Data/
 
+# Referentiecode (niet in repo)
+FYI/
+
 # Python
 __pycache__/
 *.py[cod]

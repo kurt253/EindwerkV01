@@ -19,6 +19,7 @@ col1, col2 = st.columns(2)
 with col1:
     solar_start = st.date_input(
         "Van",
+        # Standaard de dag na de laatste lokale datum, zodat er geen overlap is
         value=solar_dates[-1] + timedelta(days=1) if solar_dates else date.today(),
         key="solar_start",
     )
@@ -40,10 +41,12 @@ if st.button("⬇️ Download solar data"):
                 # sla op via download_range per dag
                 from scripts.config import SOLAR_DIR
                 import json
+                # Tweede aanroep fetch_day: de API heeft geen caching, dus dit is een echte tweede call
                 data = solar_logs.fetch_day(dag.year, dag.month, dag.day)
                 path = SOLAR_DIR / f"{dag.strftime('%Y%m%d')} - solar.json"
                 path.write_text(json.dumps(data, indent=4), encoding="utf-8")
                 dag += timedelta(days=1)
+                # Voortgangsbalk bijwerken: waarde loopt van 0.0 tot 1.0
                 progress.progress((i + 1) / dagen)
             st.success(f"✅ {dagen} dag(en) opgeslagen in {SOLAR_DIR}")
         except Exception as e:
@@ -89,6 +92,24 @@ if st.button("⬇️ Download batterij data"):
 # ── Weerdata ──────────────────────────────────────────────────────────────
 st.divider()
 st.header("🌤️ Weerdata (Open-Meteo)")
+
+from scripts.config import PANEL_TILT, PANEL_AZIMUTH
+
+# Kompasrichting berekenen voor weergave
+# Sleutels zijn kompasbearings (0=Noord, 90=Oost, 180=Zuid, 270=West) — zelfde conventie als .env
+_compass = {
+    0: "Noord", 22.5: "NNO", 45: "NO", 67.5: "ONO",
+    90: "Oost", 112.5: "OZO", 135: "ZO", 157.5: "ZZO",
+    180: "Zuid", 202.5: "ZZW", 225: "ZW", 247.5: "WZW",
+    270: "West", 292.5: "WNW", 315: "NW", 337.5: "NNW", 360: "Noord",
+}
+# Zoek de dichtstbijzijnde kompaspunt op basis van absolute hoekafstand
+kompas = min(_compass, key=lambda k: abs(k - PANEL_AZIMUTH))
+st.info(
+    f"Paneeloriëntatie: **{_compass[kompas]}** ({PANEL_AZIMUTH}° t.o.v. Zuid) · "
+    f"Helling: **{PANEL_TILT}°** · "
+    f"Aanpasbaar via `.env`"
+)
 
 col5, col6 = st.columns(2)
 with col5:
