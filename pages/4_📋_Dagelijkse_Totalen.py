@@ -63,8 +63,9 @@ with st.expander("Filter op periode"):
     filter_van_str = filter_van.strftime("%d/%m/%Y")
     filter_tot_str = filter_tot.strftime("%d/%m/%Y")
 
-    # Datum is al geformatteerd als string "DD/MM/YYYY" voor weergave;
-    # tijdelijk terugparseren voor de vergelijking met de datumkiezers
+    # df["Datum"] is al omgezet naar "DD/MM/YYYY"-strings voor weergave (zie hierboven).
+    # Voor de vergelijking moeten we ze tijdelijk terugparseren naar Timestamp,
+    # zodat >= en <= correct werken als datumvergelijking en niet als stringvergelijking.
     mask = (
         pd.to_datetime(df["Datum"], format="%d/%m/%Y") >= pd.Timestamp(filter_van)
     ) & (

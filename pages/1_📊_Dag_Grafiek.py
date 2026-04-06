@@ -82,7 +82,28 @@ if use_owndev:
     soc_data = uur_df.reindex(uren)[soc_col].ffill().fillna(0) if soc_col in uur_df.columns else None
 else:
     # Batterijdata komt uit een apart bestand (battery module), niet uit solar_logs
-    soc_data = bat_df.reindex(uren)["soc"].ffill().fillna(0) if (bat_df := battery.load_day(datum)) is not None else None
+    bat_df   = battery.load_day(datum)
+    soc_data = bat_df.reindex(uren)["soc"].ffill().fillna(0) if bat_df is not None else None
+
+# ── Batterijactiviteit per uur ────────────────────────────────────────────
+# OwnDev: charge/discharge kWh + nettovermogen (kWh) + SOFAR actie-labels
+# API:    charge/discharge kWh uit de battery-module (geen nettovermogen beschikbaar)
+bat_charge = bat_discharge = net_power_h = sofar_actions = None
+if use_owndev:
+    if "battery_charge_kwh" in uur_df.columns:
+        bat_charge    = uur_df.reindex(uren)["battery_charge_kwh"].fillna(0)
+        bat_discharge = uur_df.reindex(uren)["battery_discharge_kwh"].fillna(0)
+    if "net_power_kwh" in uur_df.columns:
+        net_power_h   = uur_df.reindex(uren)["net_power_kwh"].fillna(0)
+    if "sofar_action" in uur_df.columns:
+        sofar_actions = uur_df.reindex(uren)["sofar_action"]
+else:
+    if bat_df is not None:
+        # battery.load_day() levert "charged" en "decharged" rechtstreeks in kWh
+        bat_charge    = bat_df.reindex(uren)["charged"].fillna(0)
+        bat_discharge = bat_df.reindex(uren)["decharged"].fillna(0)
+
+has_bat = bat_charge is not None
 
 # Zonneschijn
 weer_df = None
@@ -109,8 +130,15 @@ def _label_bars(ax, values, color, max_val):
 
 
 # ── Grafieken opbouwen ───────────────────────────────────────────────────
-# Aantal grafieken: altijd 3 (injectie, afname, SOC) + optioneel 1 voor zonneschijn
-n_rows = 3 + (1 if weer_dag is not None else 0)
+# Subplotindices op naam zodat de volgorde eenvoudig te volgen is:
+# 0=injectie, 1=afname, 2=SOC, [3=batterij], [3 of 4=zonneschijn]
+AX_INJ = 0
+AX_AFN = 1
+AX_SOC = 2
+AX_BAT  = 3 if has_bat else None
+AX_WEER = (4 if has_bat else 3) if weer_dag is not None else None
+
+n_rows = 3 + (1 if has_bat else 0) + (1 if weer_dag is not None else 0)
 fig, axes = plt.subplots(n_rows, 1, figsize=(14, 4 * n_rows), sharex=True)
 fig.suptitle(
     f"Energieoverzicht — {datum.strftime('%d/%m/%Y')}  [{bron_label}]",
@@ -118,7 +146,7 @@ fig.suptitle(
 )
 
 # Grafiek 1: Injectie
-ax = axes[0]
+ax = axes[AX_INJ]
 ax.bar(uren, inj, color=c["injectie"], width=0.7, label=f"Injectie [{bron_label}]")
 _label_bars(ax, inj, c["injectie_lbl"], inj.max())
 ax.set_ylabel("kWh")
@@ -127,7 +155,7 @@ ax.legend(loc="upper right")
 ax.grid(axis="y", linestyle="--", alpha=0.5)
 
 # Grafiek 2: Afname
-ax = axes[1]
+ax = axes[AX_AFN]
 ax.bar(uren, afn, color=c["afname"], width=0.7, label=f"Afname [{bron_label}]")
 _label_bars(ax, afn, c["afname_lbl"], afn.max())
 ax.set_ylabel("kWh")
@@ -136,7 +164,7 @@ ax.legend(loc="upper right")
 ax.grid(axis="y", linestyle="--", alpha=0.5)
 
 # Grafiek 3: Batterij SOC
-ax = axes[2]
+ax = axes[AX_SOC]
 if soc_data is not None:
     ax.plot(uren, soc_data, color=c["soc"], marker="o", linewidth=2,
             label=f"SOC [{bron_label}]")
@@ -151,12 +179,65 @@ else:
             ha="center", va="center", color="gray")
 ax.set_ylabel("%")
 ax.set_title("Laadtoestand batterij (SOC)")
-ax.legend(loc="upper right")
+if soc_data is not None:
+    ax.legend(loc="upper right")
 ax.grid(axis="y", linestyle="--", alpha=0.5)
 
-# Grafiek 4: Zonneschijn
+# Grafiek 4: Batterijactiviteit (laden / ontladen / nettovermogen / SOFAR acties)
+if has_bat and AX_BAT is not None:
+    # Actiekleur en -afkorting per SOFAR-commandotype (conform BatMgmtV3.py actienamen)
+    _ACTION_COLOR = {
+        "laden tot voorziene level":             "#27ae60",
+        "ontladen tot voorziene level":          "#c0392b",
+        "laden door zon":                        "#f39c12",
+        "overschot ontladen tot voorziene level":"#e67e22",
+        "stoppen":                               "#95a5a6",
+    }
+    _ACTION_SHORT = {
+        "laden tot voorziene level":             "L↑net",
+        "ontladen tot voorziene level":          "O↓net",
+        "laden door zon":                        "L☀",
+        "overschot ontladen tot voorziene level":"O↓ovs",
+        "stoppen":                               "■",
+    }
+
+    ax = axes[AX_BAT]
+    # Groene bars voor laden, rode bars voor ontladen — licht verschoven zodat ze naast elkaar staan
+    ax.bar([u - 0.2 for u in uren], bat_charge,    width=0.35, color="#2ecc71", alpha=0.85,
+           label="Geladen (kWh)")
+    ax.bar([u + 0.2 for u in uren], bat_discharge, width=0.35, color="#e74c3c", alpha=0.85,
+           label="Ontladen (kWh)")
+
+    # Nettovermogen als lijn op tweede Y-as (alleen beschikbaar bij OwnDev)
+    if net_power_h is not None:
+        ax2 = ax.twinx()
+        ax2.plot(uren, net_power_h, color="#2c3e50", linewidth=1.5, linestyle="--",
+                 marker=".", markersize=4, label="Nettovermogen (kWh)")
+        # Nullijn: scheiding tussen afname (positief) en injectie (negatief)
+        ax2.axhline(0, color="#7f8c8d", linewidth=0.6, linestyle=":")
+        ax2.set_ylabel("Nettovermogen (kWh)", color="#2c3e50", fontsize=8)
+        ax2.tick_params(axis="y", labelcolor="#2c3e50")
+        ax2.legend(loc="upper left", fontsize=7)
+
+    # SOFAR actie-labels boven elke uur-kolom (klein, gekleurd per actie)
+    if sofar_actions is not None:
+        max_y = max(bat_charge.max(), bat_discharge.max()) if (bat_charge.max() + bat_discharge.max()) > 0 else 1
+        for u, action in zip(uren, sofar_actions):
+            if pd.notna(action):
+                a_low  = str(action).lower()
+                color  = _ACTION_COLOR.get(a_low, "#bdc3c7")
+                short  = _ACTION_SHORT.get(a_low, str(action)[:4])
+                ax.text(u, max_y * 1.01, short, ha="center", va="bottom",
+                        fontsize=6, color=color, fontweight="bold")
+
+    ax.set_ylabel("kWh")
+    ax.set_title("Batterijactiviteit per uur")
+    ax.legend(loc="upper right", fontsize=7)
+    ax.grid(axis="y", linestyle="--", alpha=0.5)
+
+# Grafiek 5: Zonneschijn
 if weer_dag is not None:
-    ax = axes[3]
+    ax = axes[AX_WEER]
     wx_uren = weer_dag.index.hour.tolist()
 
     # Zonneschijnduur ophalen (minuten per uur)
@@ -211,11 +292,10 @@ axes[-1].set_xlabel("Uur")
 axes[-1].set_xticks(uren)
 axes[-1].set_xticklabels([f"{u:02d}:00" for u in uren], rotation=45, ha="right")
 
-# Legenda databronnen
-api_patch    = mpatches.Patch(color=COLORS["api"]["injectie"],    label="API data")
-owndev_patch = mpatches.Patch(color=COLORS["owndev"]["injectie"], label="OwnDev data")
-fig.legend(handles=[api_patch, owndev_patch], loc="lower center",
-           ncol=2, bbox_to_anchor=(0.5, -0.01), frameon=True)
+# Legenda databronnen — toont enkel de actieve bron
+actieve_patch = mpatches.Patch(color=c["injectie"], label=f"{bron_label} data")
+fig.legend(handles=[actieve_patch], loc="lower center",
+           bbox_to_anchor=(0.5, -0.01), frameon=True)
 
 plt.tight_layout()
 st.pyplot(fig)
@@ -232,27 +312,56 @@ tabel = pd.DataFrame({
 if soc_data is not None:
     tabel["SOC (%)"] = soc_data.values
 
+if bat_charge is not None:
+    tabel["Geladen (kWh)"]  = bat_charge.values
+    tabel["Ontladen (kWh)"] = bat_discharge.values
+
+if net_power_h is not None:
+    tabel["Nettovermogen (kWh)"] = net_power_h.values
+
+if sofar_actions is not None:
+    # Actie-afkortingen voor leesbaarheid in de tabel
+    _SHORT = {
+        "laden tot voorziene level":             "L↑net",
+        "ontladen tot voorziene level":          "O↓net",
+        "laden door zon":                        "L☀",
+        "overschot ontladen tot voorziene level":"O↓ovs",
+        "stoppen":                               "■",
+    }
+    tabel["SOFAR actie"] = sofar_actions.map(
+        lambda a: _SHORT.get(str(a).lower(), str(a)) if pd.notna(a) else ""
+    ).values
+
 totaal = {"Uur": "Totaal", "Injectie (kWh)": inj.sum(), "Afname (kWh)": afn.sum()}
 if soc_data is not None:
-    totaal["SOC (%)"] = None  # float-kolom houden, geen lege string (sommeer geen SOC — heeft geen zin)
+    totaal["SOC (%)"] = None   # SOC heeft geen zinvolle som
+if bat_charge is not None:
+    totaal["Geladen (kWh)"]  = bat_charge.sum()
+    totaal["Ontladen (kWh)"] = bat_discharge.sum()
+if net_power_h is not None:
+    totaal["Nettovermogen (kWh)"] = net_power_h.sum()
+if sofar_actions is not None:
+    totaal["SOFAR actie"] = None
 
 tabel = pd.concat([tabel, pd.DataFrame([totaal])], ignore_index=True)
-
-# Zorg dat numerieke kolommen puur float zijn (Arrow-compatibel)
-# pd.concat kan gemengde types introduceren doordat de totaalrij dict-waarden bevat
-for col in ["Injectie (kWh)", "Afname (kWh)"]:
-    tabel[col] = pd.to_numeric(tabel[col], errors="coerce")
-if "SOC (%)" in tabel.columns:
-    tabel["SOC (%)"] = pd.to_numeric(tabel["SOC (%)"], errors="coerce")
 
 def _fmt_num(v):
     if pd.isna(v) or v == 0:
         return ""
     return f"{v:.2f}"
 
-fmt_dict = {"Injectie (kWh)": _fmt_num, "Afname (kWh)": _fmt_num}
+num_cols = ["Injectie (kWh)", "Afname (kWh)", "Geladen (kWh)", "Ontladen (kWh)", "Nettovermogen (kWh)"]
+# Zorg dat alle numerieke kolommen puur float zijn (Arrow-compatibel)
+for col in num_cols:
+    if col in tabel.columns:
+        tabel[col] = pd.to_numeric(tabel[col], errors="coerce")
+
+fmt_dict = {c: _fmt_num for c in num_cols if c in tabel.columns}
 if "SOC (%)" in tabel.columns:
+    tabel["SOC (%)"] = pd.to_numeric(tabel["SOC (%)"], errors="coerce")
     fmt_dict["SOC (%)"] = lambda v: "" if pd.isna(v) else f"{v:.0f}"
+if "SOFAR actie" in tabel.columns:
+    fmt_dict["SOFAR actie"] = lambda v: "" if pd.isna(v) or v is None else str(v)
 
 styled = (
     tabel.style

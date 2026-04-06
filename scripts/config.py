@@ -24,7 +24,19 @@ load_dotenv(_ROOT / ".env")
 
 
 def _get_secret(name: str) -> str:
-    """Haal een secret op uit Windows Credential Manager. Gooit een duidelijke fout als het ontbreekt."""
+    """
+    Haal een secret op uit de Windows Credential Manager via keyring.
+
+    Args:
+        name (str): Naam van het secret binnen de service "V1Eindwerk"
+                    (bv. "solar_auth_key" of "battery_auth_key").
+
+    Returns:
+        str: De opgeslagen sleutelwaarde.
+
+    Raises:
+        RuntimeError: Als het secret niet gevonden wordt, met instructie hoe het op te slaan.
+    """
     value = keyring.get_password("V1Eindwerk", name)
     if not value:
         raise RuntimeError(
@@ -37,10 +49,28 @@ def _get_secret(name: str) -> str:
 
 # ── Secrets (uit Windows Credential Manager) ─────────────────────────────
 def solar_auth_key() -> str:
+    """
+    Retourneer de AUTH_key voor de SolarLogs API.
+
+    Returns:
+        str: De authenticatiesleutel, opgehaald uit Windows Credential Manager.
+
+    Raises:
+        RuntimeError: Als de sleutel niet gevonden wordt.
+    """
     return _get_secret("solar_auth_key")
 
 
 def battery_auth_key() -> str:
+    """
+    Retourneer de AUTH_key voor de SolarBattery API.
+
+    Returns:
+        str: De authenticatiesleutel, opgehaald uit Windows Credential Manager.
+
+    Raises:
+        RuntimeError: Als de sleutel niet gevonden wordt.
+    """
     return _get_secret("battery_auth_key")
 
 

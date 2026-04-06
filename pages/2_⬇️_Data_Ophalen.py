@@ -6,7 +6,7 @@ from datetime import date, timedelta
 
 import streamlit as st
 
-from scripts import battery, solar_logs, weather
+from scripts import battery, owndev, solar_logs, solarcharge, weather
 
 st.set_page_config(page_title="Data Ophalen", page_icon="⬇️", layout="wide")
 st.title("⬇️ Data Ophalen")
@@ -30,27 +30,15 @@ if st.button("⬇️ Download solar data"):
     if solar_start > solar_end:
         st.error("Startdatum moet voor einddatum liggen.")
     else:
-        progress = st.progress(0)
         dagen = (solar_end - solar_start).days + 1
-        status = st.empty()
-        try:
-            dag = solar_start
-            for i in range(dagen):
-                status.text(f"Ophalen {dag} ({i+1}/{dagen})…")
-                solar_logs.fetch_day(dag.year, dag.month, dag.day)
-                # sla op via download_range per dag
-                from scripts.config import SOLAR_DIR
-                import json
-                # Tweede aanroep fetch_day: de API heeft geen caching, dus dit is een echte tweede call
-                data = solar_logs.fetch_day(dag.year, dag.month, dag.day)
-                path = SOLAR_DIR / f"{dag.strftime('%Y%m%d')} - solar.json"
-                path.write_text(json.dumps(data, indent=4), encoding="utf-8")
-                dag += timedelta(days=1)
-                # Voortgangsbalk bijwerken: waarde loopt van 0.0 tot 1.0
-                progress.progress((i + 1) / dagen)
-            st.success(f"✅ {dagen} dag(en) opgeslagen in {SOLAR_DIR}")
-        except Exception as e:
-            st.error(f"Fout: {e}")
+        with st.spinner(f"{dagen} dag(en) ophalen en opslaan…"):
+            try:
+                # download_range haalt elke dag op via de API en schrijft direct naar
+                # SOLAR_DIR/YYYYMMDD - solar.json — de grafieken lezen altijd uit die bestanden
+                saved = solar_logs.download_range(solar_start, solar_end)
+                st.success(f"✅ {len(saved)} dag(en) opgeslagen in {saved[0].parent}")
+            except Exception as e:
+                st.error(f"Fout: {e}")
 
 # ── Batterij ──────────────────────────────────────────────────────────────
 st.divider()
@@ -71,23 +59,15 @@ if st.button("⬇️ Download batterij data"):
     if bat_start > bat_end:
         st.error("Startdatum moet voor einddatum liggen.")
     else:
-        progress2 = st.progress(0)
         dagen = (bat_end - bat_start).days + 1
-        status2 = st.empty()
-        try:
-            dag = bat_start
-            for i in range(dagen):
-                status2.text(f"Ophalen {dag} ({i+1}/{dagen})…")
-                from scripts.config import BATTERY_DIR
-                import json
-                data = battery.fetch_day(dag.year, dag.month, dag.day, max_retries=5, delay=0)
-                path = BATTERY_DIR / f"{dag.strftime('%Y%m%d')} - solar.json"
-                path.write_text(json.dumps(data, indent=4), encoding="utf-8")
-                dag += timedelta(days=1)
-                progress2.progress((i + 1) / dagen)
-            st.success(f"✅ {dagen} dag(en) opgeslagen in {BATTERY_DIR}")
-        except Exception as e:
-            st.error(f"Fout: {e}")
+        with st.spinner(f"{dagen} dag(en) ophalen en opslaan…"):
+            try:
+                # download_range haalt elke dag op via de API en schrijft direct naar
+                # BATTERY_DIR/YYYYMMDD - solar.json — de grafieken lezen altijd uit die bestanden
+                saved = battery.download_range(bat_start, bat_end)
+                st.success(f"✅ {len(saved)} dag(en) opgeslagen in {saved[0].parent}")
+            except Exception as e:
+                st.error(f"Fout: {e}")
 
 # ── Weerdata ──────────────────────────────────────────────────────────────
 st.divider()
@@ -130,3 +110,144 @@ if st.button("⬇️ Download weerdata"):
                 st.success(f"✅ Opgeslagen als {path}")
             except Exception as e:
                 st.error(f"Fout: {e}")
+
+# ── OwnDev telegrammen verwerken ──────────────────────────────────────────
+st.divider()
+st.header("📡 OwnDev telegrammen → CSV")
+
+st.info(
+    "Verwerk de ruwe P1 + SOFAR telegrambestanden naar CSV. "
+    "Per dag worden 3 bestanden aangemaakt in de dagmap:\n"
+    "- **YYYY-MM-DD_p1.csv** — P1-meterdata (verbruik, levering, gas, water, …)\n"
+    "- **YYYY-MM-DD_sofar.csv** — SOFAR Modbus-data (batterijvermogen, SOC)\n"
+    "- **YYYY-MM-DD_commando.csv** — Besturingscommando's (laden/ontladen/stoppen)\n\n"
+    "De grafieken lezen daarna uit de CSV's — niet meer uit de ruwe telegrambestanden."
+)
+
+owndev_dates = owndev.available_dates()
+if not owndev_dates:
+    st.warning("Geen OwnDev-dagmappen gevonden.")
+else:
+    col_a, col_b = st.columns(2)
+    owndev_start = col_a.date_input(
+        "Van",
+        value=owndev_dates[0],
+        min_value=owndev_dates[0],
+        max_value=owndev_dates[-1],
+        key="owndev_start",
+    )
+    owndev_end = col_b.date_input(
+        "Tot",
+        value=owndev_dates[-1],
+        min_value=owndev_dates[0],
+        max_value=owndev_dates[-1],
+        key="owndev_end",
+    )
+
+    # Toon per dag of de CSV al bestaat
+    from scripts.config import SOLAR_DIR
+    from scripts.owndev import _csv_paths
+    overzicht = []
+    for d in owndev_dates:
+        if owndev_start <= d <= owndev_end:
+            p1, sofar, cmd = _csv_paths(d, SOLAR_DIR.parent / "OwnDev")
+            overzicht.append({
+                "Datum":       d.strftime("%d/%m/%Y"),
+                "P1 CSV":      "✅" if p1.exists()    else "❌",
+                "SOFAR CSV":   "✅" if sofar.exists() else "❌",
+                "Commando CSV":"✅" if cmd.exists()   else "❌",
+            })
+    if overzicht:
+        import pandas as pd
+        st.dataframe(pd.DataFrame(overzicht), hide_index=True, use_container_width=True)
+
+    btn_col1, btn_col2 = st.columns(2)
+
+    if btn_col1.button("⚙️ Verwerk telegrammen naar CSV"):
+        if owndev_start > owndev_end:
+            st.error("Startdatum moet voor einddatum liggen.")
+        else:
+            te_verwerken = [d for d in owndev_dates if owndev_start <= d <= owndev_end]
+            progress = st.progress(0)
+            status   = st.empty()
+            fouten   = []
+            for i, d in enumerate(te_verwerken):
+                status.text(f"Verwerken {d} ({i+1}/{len(te_verwerken)})…")
+                try:
+                    owndev.save_day_csv(d)
+                except Exception as e:
+                    fouten.append(f"{d}: {e}")
+                progress.progress((i + 1) / len(te_verwerken))
+            status.empty()
+            if fouten:
+                st.warning(f"Klaar met {len(fouten)} fout(en):\n" + "\n".join(fouten))
+            else:
+                st.success(f"✅ {len(te_verwerken)} dag(en) verwerkt naar CSV")
+
+    if btn_col2.button("🔍 Verwerk alle ontbrekende CSV's"):
+        with st.spinner("Alle dagmappen controleren…"):
+            verwerkt, fouten = owndev.process_missing_csvs()
+        if fouten:
+            st.warning(
+                f"{len(verwerkt)} dag(en) aangemaakt, {len(fouten)} fout(en):\n"
+                + "\n".join(f"{d}: {e}" for d, e in fouten.items())
+            )
+        elif verwerkt:
+            st.success(f"✅ {len(verwerkt)} dag(en) aangemaakt: "
+                       + ", ".join(d.strftime("%d/%m") for d in verwerkt))
+        else:
+            st.info("Alle CSV's waren al aanwezig, niets te doen.")
+
+# ── iLuCharge laadsessies ─────────────────────────────────────────────────
+st.divider()
+st.header("⚡ iLuCharge laadsessies")
+
+st.info(
+    "Verwerk alle iLuCharge-exportbestanden in de Solarcharge-map naar één "
+    "gededupliceerde CSV met gemiddeld verbruik per kwartier per sessie.\n\n"
+    f"Outputbestand: `{solarcharge.OUTPUT_FILE}`"
+)
+
+# Toon huidige status van de outputfile
+_sess_df = solarcharge.available_sessions()
+if _sess_df is not None:
+    n_kwartieren = len(_sess_df)
+    n_sessies = _sess_df[["from_dt", "to_dt", "user"]].drop_duplicates().shape[0]
+    st.caption(f"{n_sessies} sessies · {n_kwartieren} kwartierrijen opgeslagen")
+    import pandas as pd
+    weergave = _sess_df[["kwartier", "from_dt", "to_dt", "user",
+                          "sessie_kwh", "overlap_min", "energie_kwh", "gem_vermogen_kw"]].copy()
+    weergave.columns = ["Kwartier", "Van", "Tot", "Gebruiker",
+                        "Sessie kWh", "Overlap (min)", "Energie (kWh)", "Gem. vermogen (kW)"]
+    for col in ["Kwartier", "Van", "Tot"]:
+        weergave[col] = pd.to_datetime(weergave[col]).dt.strftime("%d/%m/%Y %H:%M")
+    st.dataframe(weergave, hide_index=True, use_container_width=True)
+else:
+    st.warning("Nog geen sessie-CSV aangemaakt. Klik op de knop hieronder.")
+
+if st.button("⚙️ Verwerk iLuCharge-bestanden"):
+    with st.spinner("Laadsessies inlezen en samenvoegen…"):
+        try:
+            path, n = solarcharge.save_sessions()
+            st.success(f"✅ {n} sessies opgeslagen in {path}")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Fout: {e}")
+
+# ── Analyse: batterij-responsietijd ──────────────────────────────────────
+st.divider()
+st.header("📈 Analyse: batterij-responsietijd")
+
+from scripts import analyse_response
+
+st.info("Detecteert commandowisselingen in alle OwnDev-logs en bewaart de batterij- en netstroom op 0–5 s erna. Resultaten zijn zichtbaar op de pagina **Analyse**.")
+
+if st.button("🔬 Analyseer batterij-respons"):
+    with st.spinner("Alle OwnDev-logs doorzoeken…"):
+        try:
+            path, df_res, fouten = analyse_response.run()
+            st.success(f"{len(df_res)} wisselingen opgeslagen in {path.name}")
+            if fouten:
+                st.warning(f"{len(fouten)} fout(en):\n" + "\n".join(fouten[:10]))
+        except Exception as e:
+            st.error(f"Fout: {e}")

@@ -40,13 +40,17 @@ V1Eindwerk/
 │   └── 4_📋_Dagelijkse_Totalen.py # Dagelijkse samenvattingstabel
 │
 ├── Source Data/
-│   ├── SolarLogs/                # JSON-bestanden per dag: YYYYMMDD - solar.json
-│   ├── SolarBattery/             # JSON-bestanden per dag: YYYYMMDD - solar.json
-│   ├── OwnDev/                   # Minuutbestanden per dag: YYYY-MM-DD/HH/telegram_*.txt
+│   ├── SolarLogs/                # JSON-bestanden per dag: YYYYMMDD - solar.json  (nov 2024 – heden)
+│   ├── SolarBattery/             # JSON-bestanden per dag: YYYYMMDD - solar.json  (nov 2024 – heden)
+│   ├── OwnDev/                   # Minuutbestanden: YYYY-MM-DD/HH/telegram_*.txt  (jan 2026)
+│   ├── MijnOpstelling/           # Installatiegegevens per dag                    (jan 2026)
+│   ├── Pricing.csv               # Elektriciteitsprijzen
+│   ├── ResultSolarLogs.xlsx      # Verwerkte SolarLogs exportresultaten
+│   ├── Verbruikshistoriek_elektriciteit.csv  # Historisch verbruik van het net
 │   └── vilvoorde_zonneschijn.csv # Weerdata met POA-instraling (gegenereerd door weather.py)
 │
 ├── FYI/                          # Achtergrondinfo en referentiemateriaal
-├── GetData.ipynb                 # Notebook voor handmatig data ophalen
+├── GetDatab.ipynb                # Notebook voor handmatig data ophalen
 ├── DagGrafiek.ipynb              # Notebook versie van de daggrafiek
 └── AnalyseZonneschijn.ipynb      # Notebook voor zonneschijnanalyse
 ```
@@ -134,9 +138,10 @@ De app opent automatisch in de standaardbrowser op `http://localhost:8501`.
 ### SolarBattery API (`scripts/battery.py`)
 - **Endpoint:** `https://www.solarlogs.be/API/ilucharge_api.php`
 - **Authenticatie:** `AUTH_key` header, opgeslagen in Windows Credential Manager
-- **Data:** uurlijkse SOC (%), geladen (kWh), ontladen (kWh) en financiële bedragen
+- **Data per uur:** `soc` (%), `charged` (kWh geladen), `decharged` (kWh ontladen)
+- **Dagelijkse totalen:** geladen/ontladen in kWh + kost laden (€) en opbrengst ontladen (€)
 - **Lokale opslag:** `Source Data/SolarBattery/YYYYMMDD - solar.json`
-- **Opmerking:** De API retourneert soms een leeg antwoord bij snelle opeenvolgende aanvragen. De module herprobeert automatisch tot 10 keer met een pauze van 2,5 seconden.
+- **Retry-mechanisme:** de API retourneert soms een leeg antwoord bij snelle opeenvolgende aanvragen; de module herprobeert automatisch tot 10 keer met een pauze van 2,5 s per poging.
 
 ### Open-Meteo (`scripts/weather.py`)
 - **Endpoint:** `https://archive-api.open-meteo.com/v1/archive`

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/kurtm/Documents/**)",
+      "Bash(where python:*)",
+      "Bash(where python3:*)",
+      "Read(//c/Users/kurtm/AppData/Local/Programs/Python/**)",
+      "Bash(/c/Users/kurtm/anaconda3/python.exe -c ':*)"
+    ],
+    "defaultMode": "plan"
+  }
+}

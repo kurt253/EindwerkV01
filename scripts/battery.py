@@ -1,5 +1,45 @@
 """
-Batterij data: ophalen via API en inlezen van lokale bestanden.
+Batterij data — SolarBattery API (ilucharge_api.php)
+=====================================================
+
+Verantwoordelijkheden
+---------------------
+* Ophalen van uurlijkse batterijdata via de SolarBattery REST-API (POST-requests).
+* Lokaal opslaan als JSON per dag (YYYYMMDD - solar.json) in BATTERY_DIR.
+* Inlezen van die lokale bestanden naar pandas DataFrames voor gebruik in de app.
+
+Geleverde data per dag
+----------------------
+Per uur:
+  - soc        : State of Charge in % (0–100)
+  - charged    : energie geladen uit het net in kWh
+  - decharged  : energie teruggeleverd aan het net in kWh
+
+Dagelijkse totalen (via "tot"-blok in de API-respons):
+  - Geladen (kWh)        : totaal geladen gedurende de dag
+  - Ontladen (kWh)       : totaal ontladen gedurende de dag
+  - Kost laden (€)       : netafnamekosten voor het laden
+  - Opbrengst ontl. (€)  : opbrengst van teruglevering na ontladen
+
+Authenticatie
+-------------
+De AUTH_key header wordt opgehaald via scripts.config.battery_auth_key(),
+die de sleutel uit de Windows Credential Manager leest (keyring).
+De sleutel wordt nooit in .env of broncode opgeslagen.
+
+Retry-mechanisme
+----------------
+De API retourneert soms een leeg "data"-veld bij snelle opeenvolgende
+aanvragen. fetch_day() herprobeert automatisch tot max_retries keer
+(standaard 10) met een pauze van delay seconden (standaard 2.5 s).
+
+Publieke functies
+-----------------
+  fetch_day(jaar, maand, dag)          → dict   (ruwe API-respons)
+  download_range(start, end)           → list[Path]
+  load_day(datum)                      → DataFrame | None
+  load_all()                           → DataFrame (dagelijkse totalen)
+  available_dates()                    → list[date]
 """
 
 import json
@@ -23,7 +63,26 @@ _HEADERS = {
 
 def fetch_day(jaar: int, maand: int, dag: int, max_retries: int = 10, delay: float = 2.5) -> dict:
     """
-    Haal batterijdata op voor één dag. Herhaalt tot 'data' gevuld is of max_retries bereikt.
+    Haal uurlijkse batterijdata op voor één dag via de SolarBattery API.
+
+    De API retourneert soms een leeg "data"-veld bij snelle opeenvolgende aanvragen.
+    De functie herprobeert automatisch tot max_retries keer met een pauze van delay seconden.
+
+    Args:
+        jaar        (int):   Het jaar (bv. 2026).
+        maand       (int):   De maand (1–12).
+        dag         (int):   De dag (1–31).
+        max_retries (int):   Maximum aantal pogingen bij lege API-respons. Standaard: 10.
+        delay       (float): Wachttijd in seconden tussen pogingen. Standaard: 2.5.
+
+    Returns:
+        dict: Ruwe API-respons met sleutels:
+              - "data" (lijst van uurrecords met soc, charged, decharged).
+              - "tot"  (dagelijkse samenvatting met charged, decharged, amount_charged, amount_decharged).
+              Retourneert het laatste antwoord ook als data leeg bleef na alle pogingen.
+
+    Raises:
+        ValueError: Als de datum ongeldig is (bv. 30 februari).
     """
     try:
         _ = date(jaar, maand, dag)
@@ -59,7 +118,18 @@ def fetch_day(jaar: int, maand: int, dag: int, max_retries: int = 10, delay: flo
 
 
 def download_range(start: date, end: date, output_dir: Path | None = None) -> list[Path]:
-    """Download en sla op voor elke dag in [start, end]."""
+    """
+    Download batterijdata voor elke dag in het bereik [start, end] en sla op als JSON.
+
+    Args:
+        start      (date):      Eerste dag van het bereik (inclusief).
+        end        (date):      Laatste dag van het bereik (inclusief).
+        output_dir (Path|None): Map waar bestanden worden opgeslagen.
+                                Standaard: config.BATTERY_DIR.
+
+    Returns:
+        list[Path]: Lijst van paden naar alle opgeslagen JSON-bestanden.
+    """
     output_dir = output_dir or config.BATTERY_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -75,7 +145,21 @@ def download_range(start: date, end: date, output_dir: Path | None = None) -> li
 
 
 def load_day(datum: date, data_dir: Path | None = None) -> pd.DataFrame | None:
-    """Lees één dag batterijdata. Retourneert DataFrame met kolommen soc, charged, decharged."""
+    """
+    Lees batterijdata voor één dag uit een lokaal JSON-bestand.
+
+    Args:
+        datum    (date):      De dag om te laden.
+        data_dir (Path|None): Map met de JSON-bestanden.
+                              Standaard: config.BATTERY_DIR.
+
+    Returns:
+        pd.DataFrame: Geïndexeerd op uur (0–23), met kolommen:
+                      - soc       (float): State of Charge in % (0–100) aan het einde van het uur.
+                      - charged   (float): Energie geladen in kWh gedurende dat uur.
+                      - decharged (float): Energie ontladen in kWh gedurende dat uur.
+        None: Als het bestand niet bestaat of geen meetdata bevat.
+    """
     data_dir = data_dir or config.BATTERY_DIR
     path = data_dir / f"{datum.strftime('%Y%m%d')} - solar.json"
     if not path.exists():
@@ -99,8 +183,20 @@ def load_day(datum: date, data_dir: Path | None = None) -> pd.DataFrame | None:
 
 def load_all(data_dir: Path | None = None) -> pd.DataFrame:
     """
-    Laad alle lokale JSON-bestanden en combineer tot een DataFrame met dagelijkse totalen:
-    Datum, charged_totaal, decharged_totaal, amount_charged, amount_decharged.
+    Laad alle lokale JSON-bestanden en combineer tot een DataFrame met dagelijkse totalen.
+
+    Args:
+        data_dir (Path|None): Map met de JSON-bestanden.
+                              Standaard: config.BATTERY_DIR.
+
+    Returns:
+        pd.DataFrame: Één rij per dag, gesorteerd op datum, met kolommen:
+                      - Datum              (datetime): de datum.
+                      - Geladen (kWh)      (float):    totaal geladen gedurende de dag.
+                      - Ontladen (kWh)     (float):    totaal ontladen gedurende de dag.
+                      - Kost laden (€)     (float):    netafnamekosten voor het laden.
+                      - Opbrengst ontl. (€)(float):    opbrengst van teruglevering na ontladen.
+                      Lege DataFrame als er geen geldige bestanden zijn.
     """
     data_dir = data_dir or config.BATTERY_DIR
     rows = []
@@ -134,7 +230,16 @@ def load_all(data_dir: Path | None = None) -> pd.DataFrame:
 
 
 def available_dates(data_dir: Path | None = None) -> list[date]:
-    """Gesorteerde lijst van beschikbare datums in de lokale map."""
+    """
+    Geef een gesorteerde lijst van alle datums waarvoor een lokaal JSON-bestand bestaat.
+
+    Args:
+        data_dir (Path|None): Map met de JSON-bestanden.
+                              Standaard: config.BATTERY_DIR.
+
+    Returns:
+        list[date]: Gesorteerde lijst van date-objecten. Leeg als er geen bestanden zijn.
+    """
     data_dir = data_dir or config.BATTERY_DIR
     dates = []
     for path in sorted(data_dir.glob("*.json")):
