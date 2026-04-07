@@ -5,8 +5,14 @@
       "Bash(where python:*)",
       "Bash(where python3:*)",
       "Read(//c/Users/kurtm/AppData/Local/Programs/Python/**)",
-      "Bash(/c/Users/kurtm/anaconda3/python.exe -c ':*)"
+      "Bash(/c/Users/kurtm/anaconda3/python.exe -c ':*)",
+      "Bash(/c/Users/kurtm/anaconda3/envs/Eindwerk/python.exe -c ':*)",
+      "Bash(timeout 120 /c/Users/kurtm/anaconda3/envs/Eindwerk/python.exe -c ':*)",
+      "Bash(echo \"EXIT: $?\")"
     ],
-    "defaultMode": "plan"
+    "defaultMode": "plan",
+    "additionalDirectories": [
+      "c:\\Users\\kurtm\\Documents\\V1Eindwerk\\pages"
+    ]
   }
 }

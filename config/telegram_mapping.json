@@ -1,0 +1,126 @@
+{
+  "_meta": {
+    "beschrijving": "Parametermapping voor de OwnDev-telegrambestanden geschreven door BatMgmtV3.py op de Raspberry Pi.",
+    "bronnen": [
+      "DSMR P1 Companion Standard v5.0.2 (Belgische uitbreiding)",
+      "SOFAR ME3000SP Modbus RTU registermap (slave adres 1, start reg 512, count 40)",
+      "BatMgmtV3.py (brondocumentatie)"
+    ],
+    "bestandsformaat": "Één telegrambestand per minuut. Bevat meerdere cycli (~1 Hz). Elke 5 cycli ook een SOFAR COMMAND blok."
+  },
+
+  "p1": {
+    "_beschrijving": "Belgische DSMR P1 slimme meter (Fluvius). Elke seconde één telegram.",
+    "obis_codes": {
+      "0-0:96.1.4":  { "naam": "versie_info",          "eenheid": null,  "type": "string",  "beschrijving": "MSN versie-identificatie van de meter" },
+      "0-0:96.1.1":  { "naam": "meter_serienummer",     "eenheid": null,  "type": "hex",     "beschrijving": "Serienummer van de elektriciteitsmeter (hex-gecodeerd)" },
+      "0-0:1.0.0":   { "naam": "tijdstempel",           "eenheid": null,  "type": "datetime","beschrijving": "Datum en tijd van het telegram (formaat YYMMDDHHmmssW/S)" },
+      "1-0:1.8.1":   { "naam": "verbruik_t1_kwh",       "eenheid": "kWh", "type": "float",   "beschrijving": "Totaal verbruik tarief 1 (nacht/weekend) cumulatief" },
+      "1-0:1.8.2":   { "naam": "verbruik_t2_kwh",       "eenheid": "kWh", "type": "float",   "beschrijving": "Totaal verbruik tarief 2 (dag) cumulatief" },
+      "1-0:2.8.1":   { "naam": "injectie_t1_kwh",       "eenheid": "kWh", "type": "float",   "beschrijving": "Totale injectie tarief 1 (nacht/weekend) cumulatief" },
+      "1-0:2.8.2":   { "naam": "injectie_t2_kwh",       "eenheid": "kWh", "type": "float",   "beschrijving": "Totale injectie tarief 2 (dag) cumulatief" },
+      "0-0:96.14.0": { "naam": "huidig_tarief",         "eenheid": null,  "type": "int",     "beschrijving": "Actief tarief: 0001 = tarief 1, 0002 = tarief 2" },
+      "1-0:1.4.0":   { "naam": "gemiddeld_15min_kw",    "eenheid": "kW",  "type": "float",   "beschrijving": "Lopend gemiddeld vermogen over de laatste 15 minuten (kwartierafname)" },
+      "1-0:1.6.0":   { "naam": "piek_maand_kw",         "eenheid": "kW",  "type": "float",   "beschrijving": "Hoogste kwartierafname van de lopende maand met tijdstip (capaciteitstarief)" },
+      "0-0:98.1.0":  { "naam": "maandpieken_historie",  "eenheid": "kW",  "type": "complex", "beschrijving": "De 13 hoogste maandpiekwaarden met tijdstip (capaciteitstarief historiek)" },
+      "1-0:1.7.0":   { "naam": "verbruik_kw",           "eenheid": "kW",  "type": "float",   "beschrijving": "Huidig totaal actief vermogen afname van het net" },
+      "1-0:2.7.0":   { "naam": "levering_kw",           "eenheid": "kW",  "type": "float",   "beschrijving": "Huidig totaal actief vermogen injectie naar het net" },
+      "1-0:21.7.0":  { "naam": "verbruik_l1_kw",        "eenheid": "kW",  "type": "float",   "beschrijving": "Huidig actief vermogen afname fase L1" },
+      "1-0:22.7.0":  { "naam": "levering_l1_kw",        "eenheid": "kW",  "type": "float",   "beschrijving": "Huidig actief vermogen injectie fase L1" },
+      "1-0:32.7.0":  { "naam": "spanning_l1_v",         "eenheid": "V",   "type": "float",   "beschrijving": "Ogenblikkelijke spanning fase L1" },
+      "1-0:31.7.0":  { "naam": "stroom_l1_a",           "eenheid": "A",   "type": "float",   "beschrijving": "Ogenblikkelijke stroom fase L1" },
+      "0-0:96.3.10": { "naam": "schakelstand",          "eenheid": null,  "type": "int",     "beschrijving": "Schakelstand van de meter: 1 = gesloten (normaal)" },
+      "0-0:17.0.0":  { "naam": "max_vermogen_kw",       "eenheid": "kW",  "type": "float",   "beschrijving": "Maximaal toegelaten vermogen op de aansluiting" },
+      "1-0:31.4.0":  { "naam": "max_stroom_a",          "eenheid": "A",   "type": "float",   "beschrijving": "Maximaal toegelaten stroom op de aansluiting" },
+      "0-0:96.13.0": { "naam": "tekstbericht",          "eenheid": null,  "type": "string",  "beschrijving": "Tekstbericht van de netbeheerder (normaal leeg)" },
+      "0-1:24.1.0":  { "naam": "gas_apparaattype",      "eenheid": null,  "type": "int",     "beschrijving": "Type M-Bus apparaat op kanaal 1: 003 = gas" },
+      "0-1:96.1.1":  { "naam": "gas_serienummer",       "eenheid": null,  "type": "hex",     "beschrijving": "Serienummer van de gasmeter (hex-gecodeerd)" },
+      "0-1:24.4.0":  { "naam": "gas_klep_stand",        "eenheid": null,  "type": "int",     "beschrijving": "Stand van de gasklep: 1 = open" },
+      "0-1:24.2.3":  { "naam": "gas_m3",                "eenheid": "m3",  "type": "float",   "beschrijving": "Gasafname cumulatief met tijdstip van de laatste uitlezing" },
+      "0-2:24.1.0":  { "naam": "water_apparaattype",    "eenheid": null,  "type": "int",     "beschrijving": "Type M-Bus apparaat op kanaal 2: 007 = water" },
+      "0-2:96.1.1":  { "naam": "water_serienummer",     "eenheid": null,  "type": "hex",     "beschrijving": "Serienummer van de watermeter (hex-gecodeerd)" },
+      "0-2:24.2.1":  { "naam": "water_m3",              "eenheid": "m3",  "type": "float",   "beschrijving": "Waterverbruik cumulatief met tijdstip van de laatste uitlezing" }
+    }
+  },
+
+  "sofar_me3000sp": {
+    "_beschrijving": "SOFAR ME3000SP hybride omvormer/batterijsysteem. Uitgelezen via Modbus RTU (9600 baud, slave 1). Start register 512, count 40.",
+    "_datatype_notatie": "uint16 = unsigned 16-bit; int16 = signed 16-bit (two's complement, waarden >= 32768 zijn negatief)",
+    "registers": {
+      "512": { "naam": "systeem_status",       "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Systeemstatus: 0 = normaal" },
+      "513": { "naam": "fout_1",               "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Foutregister 1 (bitmasker)" },
+      "514": { "naam": "fout_2",               "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Foutregister 2 (bitmasker)" },
+      "515": { "naam": "fout_3",               "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Foutregister 3 (bitmasker)" },
+      "516": { "naam": "fout_4",               "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Foutregister 4 (bitmasker)" },
+      "517": { "naam": "fout_5",               "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Foutregister 5 (bitmasker)" },
+      "518": { "naam": "netspanning_v",        "eenheid": "V",    "type": "uint16", "schaal": 0.1,  "beschrijving": "Netspanning fase (×0.1 V). Voorbeeld: 2365 = 236.5 V" },
+      "519": { "naam": "netstroom_a",          "eenheid": "A",    "type": "uint16", "schaal": 0.01, "beschrijving": "Netstroom (×0.01 A)" },
+      "520": { "naam": "netfrequentie_hz",     "eenheid": "Hz",   "type": "uint16", "schaal": 0.01, "beschrijving": "Netfrequentie (×0.01 Hz). Voorbeeld: 5000 = 50.00 Hz" },
+      "521": { "naam": "onbekend_521",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "522": { "naam": "onbekend_522",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "523": { "naam": "onbekend_523",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "524": { "naam": "onbekend_524",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "525": { "naam": "batterij_vermogen_kw", "eenheid": "kW",   "type": "int16",  "schaal": 0.01, "beschrijving": "Netto batterijvermogen (×0.01 kW, signed int16). Positief = laden, negatief = ontladen. Voorbeeld: 65535 = -1 = -0.01 kW" },
+      "526": { "naam": "batterij_spanning_v",  "eenheid": "V",    "type": "uint16", "schaal": 0.1,  "beschrijving": "Batterijspanning (×0.1 V). Voorbeeld: 5330 = 533.0 V" },
+      "527": { "naam": "batterij_stroom_a",    "eenheid": "A",    "type": "int16",  "schaal": 0.01, "beschrijving": "Batterijstroom (×0.01 A, signed). Positief = laden, negatief = ontladen" },
+      "528": { "naam": "batterij_soc_pct",     "eenheid": "%",    "type": "uint16", "schaal": 1,    "beschrijving": "State of Charge van de batterij (0–100 %)" },
+      "529": { "naam": "batterij_temp_c",      "eenheid": "C",    "type": "uint16", "schaal": 1,    "beschrijving": "Batterijtemperatuur in graden Celsius" },
+      "530": { "naam": "onbekend_530",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "531": { "naam": "onbekend_531",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "532": { "naam": "onbekend_532",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "533": { "naam": "onbekend_533",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "534": { "naam": "onbekend_534",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "535": { "naam": "onbekend_535",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "536": { "naam": "onbekend_536",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "537": { "naam": "onbekend_537",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "538": { "naam": "onbekend_538",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "539": { "naam": "onbekend_539",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "540": { "naam": "onbekend_540",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "541": { "naam": "onbekend_541",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "542": { "naam": "onbekend_542",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "543": { "naam": "onbekend_543",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "544": { "naam": "onbekend_544",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "545": { "naam": "onbekend_545",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "546": { "naam": "onbekend_546",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "547": { "naam": "onbekend_547",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "548": { "naam": "onbekend_548",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "549": { "naam": "onbekend_549",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "550": { "naam": "onbekend_550",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" },
+      "551": { "naam": "onbekend_551",         "eenheid": null,   "type": "uint16", "schaal": 1,    "beschrijving": "Onbekend" }
+    },
+    "modbus_commando_registers": {
+      "_beschrijving": "Schrijfregisters gebruikt door BatMgmtV3.py om de batterij aan te sturen (function code 0x42, heartbeat 0x49)",
+      "0x0100": { "naam": "REG_STANDBY",   "waarde": "0x5555", "beschrijving": "Batterij in standby zetten (stoppen)" },
+      "0x0101": { "naam": "REG_DISCHARGE", "waarde": "vermogen in W", "beschrijving": "Ontladen met opgegeven vermogen in W" },
+      "0x0102": { "naam": "REG_CHARGE",    "waarde": "vermogen in W", "beschrijving": "Laden met opgegeven vermogen in W" },
+      "0x2201": { "naam": "REG_HEARTBEAT", "waarde": "0x2202",        "beschrijving": "Heartbeat, na elk commando verplicht te sturen" }
+    }
+  },
+
+  "sofar_command_blok": {
+    "_beschrijving": "Elke 5 P1-cycli (~5 seconden) schrijft BatMgmtV3.py een SOFAR COMMAND blok in het telegrambestand.",
+    "formaat": "======== SOFAR COMMAND : <actie> ========\nMeasurement time : YYYY-MM-DD HH:MM:SS\n<vermogen in W>  ← alleen aanwezig bij laden/ontladen\n!",
+    "acties": {
+      "laden tot voorziene level":    "Batterij laden; vermogen in W staat op de volgende regel",
+      "ontladen tot voorziene level": "Batterij ontladen; vermogen in W staat op de volgende regel",
+      "laden door zon":               "Laden met zonne-overschot; vermogen in W staat op de volgende regel",
+      "ontladen overschot":           "Ontladen om te vermijden dat stroom het net op gaat; vermogen in W",
+      "stoppen":                      "Batterij in standby, geen vermogen op de volgende regel"
+    },
+    "besturingslogica": {
+      "_beschrijving": "Drempelwaarden en beslisregels van BatMgmtV3.py",
+      "MAX_GRID_POWER_KW":   3.5,
+      "MAX_CHARGE_POWER_KW": 2.5,
+      "MAX_BATTERY_SOC_PCT": 80,
+      "MIN_BATTERY_SOC_PCT": 10,
+      "net_power_formule":   "net_power = verbruik_kw - levering_kw - battery_power_kw",
+      "regels": [
+        { "conditie": "net_power < 3.5 AND soc < 80", "actie": "laden tot voorziene level",    "vermogen_kw": "min(2.5, 3.5 - net_power)" },
+        { "conditie": "net_power > 3.5 AND soc > 10", "actie": "ontladen tot voorziene level", "vermogen_kw": "min(2.5, net_power - 3.5)" },
+        { "conditie": "net_power < 0   AND soc < 100","actie": "laden door zon",               "vermogen_kw": "min(2.5, -net_power)" },
+        { "conditie": "net_power > 0   AND soc > 80", "actie": "ontladen overschot",           "vermogen_kw": "min(2.5, net_power)" },
+        { "conditie": "anders",                        "actie": "stoppen",                      "vermogen_kw": null }
+      ]
+    }
+  }
+}

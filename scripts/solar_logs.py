@@ -109,7 +109,10 @@ def load_day(datum: date, data_dir: Path | None = None) -> pd.DataFrame | None:
         return None
 
     raw = json.loads(path.read_text(encoding="utf-8"))
-    df = pd.DataFrame(raw["data"])
+    records = raw.get("data") or []
+    if not records:
+        return None
+    df = pd.DataFrame(records)
     df["valueDate"] = pd.to_datetime(df["valueDate"])
     # Uur extraheren als geheel getal (0–23) zodat het als index bruikbaar is
     df["uur"] = df["valueDate"].dt.hour
