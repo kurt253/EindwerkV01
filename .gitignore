@@ -1,9 +1,10 @@
 
-# Notebooks
-*.ipynb
+# Notebooks — enkel data_voorbereiding.ipynb in repo; rest genegeerd
+notebooks/*.ipynb
+!notebooks/data_voorbereiding.ipynb
 
-# Source data
-Source Data/
+# Source data en intermediate results (grote bestanden, niet in repo)
+Data/
 
 # Referentiecode (niet in repo)
 FYI/

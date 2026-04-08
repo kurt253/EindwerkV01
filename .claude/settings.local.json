@@ -8,11 +8,13 @@
       "Bash(/c/Users/kurtm/anaconda3/python.exe -c ':*)",
       "Bash(/c/Users/kurtm/anaconda3/envs/Eindwerk/python.exe -c ':*)",
       "Bash(timeout 120 /c/Users/kurtm/anaconda3/envs/Eindwerk/python.exe -c ':*)",
-      "Bash(echo \"EXIT: $?\")"
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(/c/Users/kurtm/anaconda3/python.exe -c \"import ast; ast.parse\\(open\\('scripts/owndev.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ],
     "defaultMode": "plan",
     "additionalDirectories": [
-      "c:\\Users\\kurtm\\Documents\\V1Eindwerk\\pages"
+      "c:\\Users\\kurtm\\Documents\\V1Eindwerk\\pages",
+      "c:\\Users\\kurtm\\Documents\\V1Eindwerk"
     ]
   }
 }

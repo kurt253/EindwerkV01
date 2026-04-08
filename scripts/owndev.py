@@ -393,6 +393,227 @@ def verwerk(owndev_dir: Path | None = None) -> tuple[Path, int]:
     return OUTPUT_FILE, n_nieuw
 
 
+RESPONS_FILE: Path = INTERMEDIATE_DIR / "commando_respons.csv"
+
+# Gesigneerde outputkolommen per seconde na het commando:
+#   net_kw = afname_kw − terugave_kw        (+ afname van net, − injectie naar net)
+#   bat_kw = bat_laden_kw − bat_ontladen_kw (+ laden batterij, − ontladen batterij)
+_RESPONS_KOLOMMEN = ["net_kw", "bat_kw"]
+
+# Aantal seconden na het commando dat we volgen
+_N_SECONDEN = 5
+
+
+def detecteer_nuttige_commando_s(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Detecteer rijen waarop het gevraagde batterijvermogen effectief wijzigt.
+
+    Een 'nuttig commando' is een seconde waarop ``commando_kw`` verschilt van
+    de onmiddellijk voorgaande waarde. Dit filtert herhalingen weg (het
+    commando wordt elke ~7 seconden herhaald, ook als er niets verandert).
+
+    Seconden met sofar_action == 'Onbekend' worden overgeslagen omdat we dan
+    geen betrouwbaar commando kennen.
+
+    Args:
+        df (pd.DataFrame): Volledige seconde-tijdreeks, gesorteerd op tijdstip,
+                           met kolommen ``sofar_action`` en ``commando_kw``.
+
+    Returns:
+        pd.DataFrame: Subset van df met enkel de rijen waarop een echte
+                      vermogenswijziging optrad, gesorteerd op tijdstip.
+    """
+    df = df.sort_values("tijdstip").copy()
+
+    # Verwijder rijen zonder gekend commando
+    df_bekend = df[df["sofar_action"] != "Onbekend"].copy()
+
+    # Detecteer wijzigingen: vergelijk commando_kw met de vorige rij
+    # fillna zodat NaN → NaN geen false positive geeft
+    vorig = df_bekend["commando_kw"].shift(1)
+    gewijzigd = df_bekend["commando_kw"].ne(vorig) | (
+        df_bekend["commando_kw"].isna() & vorig.notna()
+    )
+
+    return df_bekend[gewijzigd].reset_index(drop=True)
+
+
+def analyseer_commando_respons(
+    df: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, Path]:
+    """
+    Bouw een DataFrame met voor elk nuttig commando de respons in de volgende
+    5 seconden, en sla het op als CSV.
+
+    STRUCTUUR VAN HET OUTPUTBESTAND
+    ---------------------------------
+    Eén rij per nuttig commando. Kolommen:
+
+        tijdstip        datetime  seconde waarop het commando gegeven werd
+        sofar_action    str       naam van het commando
+        commando_kw     float     gevraagd vermogen (kW): + laden, − ontladen
+
+        Voor elke seconde n = 1 … 5 na het commando:
+            net_kw_sN        float  P1 nettovermogen (kW): + afname van net, − injectie
+            bat_kw_sN        float  Batterijvermogen (kW): + laden,          − ontladen
+            afwijking_kw_sN  float  bat_kw_sN − commando_kw; cirkelt rond 0
+
+        soc  int  State of Charge (%) op het moment van het commando
+
+    Ontbrekende seconden (gat in de log) krijgen NaN.
+
+    IMPLEMENTATIE
+    -------------
+    1. Laad de volledige seconde-tijdreeks als gesorteerde integer-index.
+    2. Detecteer nuttige commando's via ``detecteer_nuttige_commando_s``.
+    3. Zoek voor elk commando de positie in de tijdreeks en pak de volgende
+       _N_SECONDEN rijen op via positionele indexering (handelt gaten af).
+    4. Breid het commando-record uit tot één brede rij met suffix _s1 … _s5.
+
+    Args:
+        df (pd.DataFrame | None): Gesorteerde seconde-tijdreeks. Wordt
+                                  ingeladen via ``laad()`` als None.
+
+    Returns:
+        tuple[pd.DataFrame, Path]: Het resultaat-DataFrame en het pad naar
+                                   de geschreven CSV.
+    """
+    if df is None:
+        df = laad()
+
+    if df.empty:
+        leeg = pd.DataFrame()
+        leeg.to_csv(RESPONS_FILE, index=False)
+        return leeg, RESPONS_FILE
+
+    # Gesorteerde tijdreeks met reset index zodat positie == index
+    df_vol = df.sort_values("tijdstip").reset_index(drop=True)
+
+    # Maak een snelle lookup: tijdstip → rij-index
+    ts_naar_idx: dict = {ts: i for i, ts in enumerate(df_vol["tijdstip"])}
+
+    nuttige = detecteer_nuttige_commando_s(df_vol)
+
+    rijen: list[dict] = []
+    for _, cmd in nuttige.iterrows():
+        commando_kw = cmd["commando_kw"]
+        rij: dict = {
+            "tijdstip":     cmd["tijdstip"],
+            "sofar_action": cmd["sofar_action"],
+            "commando_kw":  commando_kw,
+        }
+
+        # Positie van dit commando in de volledige tijdreeks
+        pos = ts_naar_idx.get(cmd["tijdstip"])
+        if pos is None:
+            # Tijdstip niet teruggevonden (zou niet mogen) → alles NaN
+            for n in range(1, _N_SECONDEN + 1):
+                rij[f"net_kw_s{n}"]      = None
+                rij[f"bat_kw_s{n}"]      = None
+                rij[f"afwijking_kw_s{n}"] = None
+            rij["soc"] = None
+            rijen.append(rij)
+            continue
+
+        # Haal de volgende _N_SECONDEN rijen op (kunnen er minder zijn aan einde)
+        volgende = df_vol.iloc[pos + 1 : pos + 1 + _N_SECONDEN]
+
+        for n in range(1, _N_SECONDEN + 1):
+            if n - 1 < len(volgende):
+                seconde = volgende.iloc[n - 1]
+                # net_kw: afname positief (verbruik van net), terugave negatief
+                afname   = seconde.get("afname_kw")       or 0.0
+                terugave = seconde.get("terugave_kw")     or 0.0
+                # bat_kw: laden positief, ontladen negatief
+                laden    = seconde.get("bat_laden_kw")    or 0.0
+                ontladen = seconde.get("bat_ontladen_kw") or 0.0
+                bat_kw   = round(laden - ontladen, 3)
+                rij[f"net_kw_s{n}"] = round(afname - terugave, 3)
+                rij[f"bat_kw_s{n}"] = bat_kw
+                # Afwijking = geleverd − gevraagd; cirkelt rond 0 bij goede opvolging
+                rij[f"afwijking_kw_s{n}"] = (
+                    round(bat_kw - commando_kw, 3)
+                    if commando_kw is not None else None
+                )
+            else:
+                # Niet genoeg rijen beschikbaar (einde dataset of groot gat)
+                rij[f"net_kw_s{n}"]       = None
+                rij[f"bat_kw_s{n}"]       = None
+                rij[f"afwijking_kw_s{n}"] = None
+
+        # SOC éénmalig: waarde op het moment van het commando zelf
+        rij["soc"] = cmd.get("soc")
+
+        rijen.append(rij)
+
+    df_respons = pd.DataFrame(rijen)
+
+    INTERMEDIATE_DIR.mkdir(parents=True, exist_ok=True)
+    df_respons.to_csv(RESPONS_FILE, index=False, date_format="%Y-%m-%d %H:%M:%S")
+
+    return df_respons, RESPONS_FILE
+
+
+def afwijking_per_commando(df_respons: pd.DataFrame | None = None) -> pd.DataFrame:
+    """
+    Bereken per commando-type de gemiddelde en maximale afwijking per seconde.
+
+    De afwijking (``afwijking_kw_sN``) is het verschil tussen het geleverde
+    batterijvermogen en het gevraagde vermogen:
+        afwijking = bat_kw_sN − commando_kw
+
+    Een waarde dicht bij 0 betekent dat de batterij de opdracht goed opvolgde.
+
+    Args:
+        df_respons (pd.DataFrame | None): Uitvoer van ``analyseer_commando_respons``.
+                                          Wordt ingeladen uit RESPONS_FILE als None.
+
+    Returns:
+        pd.DataFrame: Één rij per (sofar_action, seconde) met kolommen:
+            - sofar_action  (str):   naam van het commando
+            - seconde       (int):   seconde na het commando (1 … _N_SECONDEN)
+            - gem_afwijking (float): gemiddelde afwijking over alle commando's (kW)
+            - max_afwijking (float): maximale absolute afwijking (kW)
+            - n             (int):   aantal commando's waarop het gemiddelde gebaseerd is
+    """
+    if df_respons is None:
+        if not RESPONS_FILE.exists():
+            return pd.DataFrame(columns=[
+                "sofar_action", "seconde", "gem_afwijking", "max_afwijking", "n"
+            ])
+        df_respons = pd.read_csv(RESPONS_FILE, parse_dates=["tijdstip"])
+
+    # Bouw een lang formaat: één rij per (commando, seconde)
+    rijen: list[dict] = []
+    for n in range(1, _N_SECONDEN + 1):
+        kol = f"afwijking_kw_s{n}"
+        if kol not in df_respons.columns:
+            continue
+        # Groepeer per commando-type en bereken statistieken
+        groep = (
+            df_respons[["sofar_action", kol]]
+            .dropna(subset=[kol])
+            .groupby("sofar_action")[kol]
+        )
+        stats = groep.agg(
+            gem_afwijking="mean",
+            max_afwijking=lambda x: x.abs().max(),
+            n="count",
+        ).reset_index()
+        stats["seconde"] = n
+        rijen.append(stats)
+
+    if not rijen:
+        return pd.DataFrame(columns=[
+            "sofar_action", "seconde", "gem_afwijking", "max_afwijking", "n"
+        ])
+
+    df = pd.concat(rijen, ignore_index=True)
+    df["gem_afwijking"] = df["gem_afwijking"].round(4)
+    df["max_afwijking"] = df["max_afwijking"].round(4)
+    return df[["sofar_action", "seconde", "gem_afwijking", "max_afwijking", "n"]]
+
+
 def laad() -> pd.DataFrame:
     """
     Lees het verwerkte outputbestand in als DataFrame.
