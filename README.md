@@ -35,12 +35,14 @@ V1Eindwerk/
 │   ├── fluvius.py                    # Fluvius CSV-export — kwartiertotalen digitale meter
 │   ├── owndev.py                     # OwnDev Raspberry Pi — seconde-telegrammen P1 + SOFAR
 │   ├── solarcharge.py                # iLuCharge API — EV laadsessies uitgespreid per kwartier
-│   └── weather.py                    # Open-Meteo + pvlib — uurlijks weer en POA-instraling
+│   ├── weather.py                    # Open-Meteo + pvlib — uurlijks weer en POA-instraling
+│   └── overall.py                    # Samenvoegen alle bronnen tot kwartierbestand (overall.csv)
 │
 ├── notebooks/
-│   └── data_voorbereiding.ipynb      # Hoofd-notebook: data inladen, verwerken en analyseren
+│   ├── data_voorbereiding.ipynb      # Data inladen, verwerken en batterij-responsanalyse
+│   └── kwartier_analyse.ipynb        # Kwartieranalyse: verbruik, weekpatroon, zonrelatie
 │
-├── Data/                             # Alle lokale data (niet in git via .gitignore)
+├── data/                             # Alle lokale data (niet in git via .gitignore)
 │   ├── Source Data/
 │   │   ├── SolarLogs/                # JSON per dag: YYYYMMDD - solar.json
 │   │   ├── SolarBattery/             # JSON per dag: YYYYMMDD - solar.json
@@ -52,9 +54,15 @@ V1Eindwerk/
 │   │   ├── Fluvius/                  # Semikolon-gescheiden Fluvius-exports + outputbestand
 │   │   ├── Solarcharge/              # iLuCharge CSV-exports
 │   │   └── vilvoorde_zonneschijn.csv # Gegenereerd door weather.py (Open-Meteo + pvlib)
-│   └── intermediate results/
-│       ├── owndev_seconden.csv       # Verwerkte OwnDev seconde-tijdreeks
-│       └── commando_respons.csv      # Commando-respons­analyse per nuttig commando
+│   ├── intermediate results/
+│   │   ├── owndev_seconden.csv       # Verwerkte OwnDev seconde-tijdreeks
+│   │   └── commando_respons.csv      # Commando-respons­analyse per nuttig commando
+│   └── Final/                        # Analyseklare outputbestanden (input voor voorspelmodellen)
+│       ├── overall.csv               # Alle bronnen per kwartier (ruwe combinatie)
+│       ├── overall_verrijkt.csv      # overall.csv + afgeleide verbruikskolommen
+│       ├── weekpatroon.csv           # Gem. verbruik per kwartier per weekdag (96 × 7)
+│       ├── dag_zon_analyse.csv       # Dagelijkse injectie + zonneschijn + POA
+│       └── dag_zon_met_verhoudingen.csv  # Subset met injectie/zon-verhoudingen (trainingsdata)
 │
 └── FYI/
     └── BatMgmtV3.py                  # Referentie: het Raspberry Pi-script dat de
@@ -237,17 +245,122 @@ De instraling op het **paneeloppervlak** (Plane of Array, POA) wordt lokaal bere
 
 ---
 
+## Script: `scripts/overall.py`
+
+`overall.py` is het centrale samenvoegingsscript dat alle databronnen combineert tot
+één kwartierbestand. Het gebruikt de **Fluvius-data als basis** — elke rij stemt
+overeen met een kwartier waarvoor Fluvius een meting registreerde — en verrijkt die
+met OwnDev, SolarLogs, Battery, Solarcharge en weerdata via left-joins.
+
+### Werkwijze
+
+```
+Fluvius (basis) → afname_kwh, injectie_kwh, tarief (dag/nacht)
+    ↓ left-join op kwartier
+OwnDev → bat_laden_kw, bat_ontladen_kw, afname_kw, terugave_kw, soc_begin, soc_eind, n_seconden
+    ↓ left-join op floor(kwartier, uur)
+SolarLogs → sl_afname_kwh, sl_injectie_kwh, sl_productie_kwh
+Battery   → bat_geladen_kwh, bat_ontladen_kwh, bat_soc_uur
+Weather   → weer_poa_w_m2, weer_ghi_w_m2, weer_zon_min
+    ↓ left-join op kwartier
+Solarcharge → ev_energie_kwh, ev_vermogen_kw
+    ↓
+data/Final/overall.csv
+```
+
+Kwartieren waarvoor een bron geen data heeft krijgen `NaN` in de betreffende kolommen.
+Het resultaat wordt opgeslagen als `data/Final/overall.csv`.
+
+### Tariefkolom
+
+Per kwartier wordt bepaald of het dag- of nachttarief actief was op basis van de
+Fluvius-meting: als `afname_dag > 0` of `injectie_dag > 0` is het dagtarief, anders nachttarief.
+In de praktijk is elk kwartier unidirectioneel (dag of nacht, nooit beide).
+
+### Gebruik
+
+```python
+from scripts.overall import bouw
+
+df, pad = bouw()           # bouwt overall.csv opnieuw op
+df, pad = bouw(output_file=Path("mijn_pad.csv"))   # alternatief uitvoerpad
+```
+
+---
+
 ## Notebook: `notebooks/data_voorbereiding.ipynb`
 
-Het hoofd-notebook verwerkt en analyseert alle databronnen in vijf secties:
+Het notebook voor databeheer en batterij-responsanalyse in vijf secties:
 
 | Sectie | Inhoud |
 |---|---|
+| **0. Data ophalen** | Aanroepen van alle fetch-functies per bron (SolarLogs, Battery, Fluvius, OwnDev, Solarcharge, Weather) |
 | **1. Beschikbare data per bron** | Overzicht van periodes en aantallen rijen per bron |
 | **2. OwnDev — telegrammen verwerken** | Aanroep van `owndev.verwerk()` — incrementeel bijwerken van `owndev_seconden.csv` |
 | **3. OwnDev — nuttige commando's** | Aanroep van `owndev.analyseer_commando_respons()` — bouw en opslaan van `commando_respons.csv` |
 | **4. Gemiddelde en maximale afwijking** | Gegroepeerde staafgrafiek: gemiddelde en maximale `afwijking_kw` per commando-type per seconde |
 | **5. Outliers in de afwijking** | Strip-plot met outlier-markering (drempel = gemiddelde ± 2 × std) + overzichtstabel |
+
+---
+
+## Notebook: `notebooks/kwartier_analyse.ipynb`
+
+Dit notebook voert de kwartieranalyse uit op het gecombineerde bestand en berekent
+de inputfeatures die later worden gebruikt voor energievoorspelling.
+
+### Secties
+
+| Sectie | Inhoud | Outputbestand |
+|---|---|---|
+| **1. Bouw het kwartierbestand** | Aanroep van `overall.bouw()` — maakt `overall.csv` | `data/Final/overall.csv` |
+| **2. Structuur en basisstatistieken** | Periode, tariefsplitsing, describe-tabel | — |
+| **3. Analyse beschikbare data** | Meetdagen per bron, zonneschjindagen | — |
+| **4a. Verbruiksberekening** | Energiebalans per kwartier, gecorrigeerd voor EV, zon en batterij | `data/Final/overall_verrijkt.csv` |
+| **4b. Weekpatroon** | Gemiddeld verbruik per kwartier per dag van de week (heatmap + lijnplot) | `data/Final/weekpatroon.csv` |
+| **4c. Zon-injectieanalyse** | Correlatie POA/zonneschijn met injectie, regressie en scatterplots | `data/Final/dag_zon_analyse.csv`, `dag_zon_met_verhoudingen.csv` |
+| **Conclusies** | Analytische samenvatting van alle bevindingen | — |
+
+### Verbruiksformule
+
+Het gecorrigeerde huisverbruik per kwartier wordt als volgt berekend:
+
+```
+verbruik_kwh = afname_kwh
+             + bat_ontladen_kwh       (batterij levert energie aan huis)
+             - injectie_kwh           (zonneoverschot gaat terug naar net)
+             - ev_kwh                 (wagenlading is geen huisverbruik)
+             - bat_laden_kwh          (batterijlading is geen huisverbruik)
+```
+
+OwnDev-vermogens (kW) worden omgezet naar kWh via `× 0.25` (kwartier = ¼ uur).
+Als OwnDev-data ontbreekt, wordt teruggevallen op iLumen-uurwaarden (`÷ 4`).
+Kleine negatieve restwaarden (meetruis of tijdsverschuiving tussen meters) worden naar nul geclipped.
+
+### Weekpatroon
+
+Door alle kwartieren te groeperen op **(dag van de week, kwartier van de dag)** ontstaat
+een gemiddeld dagprofiel per weekdag (Maandag t/m Zondag). Dit profiel van 96 × 7 = 672
+gemiddelden dient als basisfeature voor verbruiksvoorspellings­modellen:
+
+```
+weekpatroon.csv
+├── kwartier_van_dag  (index, 0..95 = 0:00..23:45)
+├── tijdstip          (HH:MM-label)
+├── Maandag           (gem. kWh/kwartier)
+├── Dinsdag
+├── ...
+└── Zondag
+```
+
+### Outputbestanden in `data/Final/`
+
+| Bestand | Beschrijving | Rijen | Gebruik |
+|---|---|---|---|
+| `overall.csv` | Alle bronnen per kwartier, ruwe join | 1 per Fluvius-kwartier | Basisdata, herbruikbaar |
+| `overall_verrijkt.csv` | Idem + `ev_kwh`, `bat_*_kwh_kw`, `verbruik_kwh` | Zelfde | Directe input voor modellen |
+| `weekpatroon.csv` | Gem. verbruik per kwartier per weekdag | 96 | Verbruikspatroon-feature |
+| `dag_zon_analyse.csv` | Dagelijkse injectie + zonneschijn + POA | 1 per dag | Basisdata zonrelatie |
+| `dag_zon_met_verhoudingen.csv` | Subset met berekende verhoudingen (alleen zonnige dagen) | 1 per zonnige dag | Trainingsdata productiemodel |
 
 ---
 

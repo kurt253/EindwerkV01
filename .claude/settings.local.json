@@ -9,7 +9,11 @@
       "Bash(/c/Users/kurtm/anaconda3/envs/Eindwerk/python.exe -c ':*)",
       "Bash(timeout 120 /c/Users/kurtm/anaconda3/envs/Eindwerk/python.exe -c ':*)",
       "Bash(echo \"EXIT: $?\")",
-      "Bash(/c/Users/kurtm/anaconda3/python.exe -c \"import ast; ast.parse\\(open\\('scripts/owndev.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "Bash(/c/Users/kurtm/anaconda3/python.exe -c \"import ast; ast.parse\\(open\\('scripts/owndev.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python3 -c ':*)",
+      "Bash(python -c ':*)",
+      "Bash(python -c \"import scripts.overall; print\\('OK:', [x for x in dir\\(scripts.overall\\) if not x.startswith\\('_'\\)]\\)\")",
+      "Bash(python -c \"import scripts.overall; print\\('OK'\\)\")"
     ],
     "defaultMode": "plan",
     "additionalDirectories": [

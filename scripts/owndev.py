@@ -62,7 +62,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from scripts.config import INTERMEDIATE_DIR, OWNDEV_DIR
+from scripts.config import INTERMEDIATE_DIR, FINAL_DIR, OWNDEV_DIR
 
 # ── Paden ─────────────────────────────────────────────────────────────────
 OUTPUT_FILE: Path = INTERMEDIATE_DIR / "owndev_seconden.csv"
@@ -612,6 +612,108 @@ def afwijking_per_commando(df_respons: pd.DataFrame | None = None) -> pd.DataFra
     df["gem_afwijking"] = df["gem_afwijking"].round(4)
     df["max_afwijking"] = df["max_afwijking"].round(4)
     return df[["sofar_action", "seconde", "gem_afwijking", "max_afwijking", "n"]]
+
+
+OVERALL_FILE: Path = FINAL_DIR / "overall.csv"
+
+# Drempelwaarden voor volledigheidscheck van een kwartier
+_MAX_START_GAP_S: int = 60   # eerste meting mag maximaal 60s na de kwartierstart vallen
+_MAX_EIND_GAP_S:  int = 60   # laatste meting mag maximaal 60s voor het kwartier­einde vallen
+
+
+def groepeer_per_kwartier(
+    df: pd.DataFrame | None = None,
+    output_file: Path | None = None,
+) -> tuple[pd.DataFrame, Path]:
+    """
+    Groepeer de OwnDev seconde-tijdreeks naar volledige kwartier-intervallen.
+
+    Kwartieren starten altijd op een geheel kwartiermark (HH:00, HH:15, HH:30,
+    HH:45). Een kwartier wordt alleen meegenomen als het volledig gedekt is:
+
+        - De eerste meting in het kwartier valt binnen ``_MAX_START_GAP_S``
+          seconden ná de kwartierstart.
+        - De laatste meting valt binnen ``_MAX_EIND_GAP_S`` seconden vóór het
+          begin van het volgende kwartier.
+
+    Per volledig kwartier worden berekend:
+
+        kwartier          datetime  starttijdstip van het 15-minuten-slot
+        bat_laden_kw      float     gemiddeld laadvermogen batterij (kW)
+        bat_ontladen_kw   float     gemiddeld ontlaadvermogen batterij (kW)
+        soc_begin         int/float SOC (%) bij de eerste meting in het kwartier
+        soc_eind          int/float SOC (%) bij de laatste meting in het kwartier
+        afname_kw         float     gemiddeld vermogen afgenomen van het net (kW)
+        terugave_kw       float     gemiddeld vermogen teruggegeven aan het net (kW)
+        n_seconden        int       aantal meetpunten in het kwartier
+
+    Args:
+        df (pd.DataFrame | None): Gesorteerde seconde-tijdreeks met kolommen
+            tijdstip, bat_laden_kw, bat_ontladen_kw, soc, afname_kw, terugave_kw.
+            Wordt via ``laad()`` ingeladen als None.
+        output_file (Path | None): Pad om het resultaat op te slaan.
+            Standaard: OVERALL_FILE (data/Final/overall.csv).
+
+    Returns:
+        tuple[pd.DataFrame, Path]: Het kwartier-DataFrame en het pad naar de
+            geschreven CSV.
+    """
+    if df is None:
+        df = laad()
+
+    output_file = output_file or OVERALL_FILE
+
+    if df.empty:
+        leeg = pd.DataFrame(columns=[
+            "kwartier", "bat_laden_kw", "bat_ontladen_kw",
+            "soc_begin", "soc_eind", "afname_kw", "terugave_kw", "n_seconden",
+        ])
+        FINAL_DIR.mkdir(parents=True, exist_ok=True)
+        leeg.to_csv(output_file, index=False)
+        return leeg, output_file
+
+    df = df.sort_values("tijdstip").copy()
+
+    # Floor elk tijdstip naar het dichtstbijzijnde kwartierbegin
+    # pd.Timedelta("15min") geeft kwartiermarks op :00, :15, :30, :45
+    df["kwartier"] = df["tijdstip"].dt.floor("15min")
+
+    rijen: list[dict] = []
+    for kwartier, groep in df.groupby("kwartier"):
+        groep = groep.sort_values("tijdstip")
+
+        eerste_ts = groep["tijdstip"].iloc[0]
+        laatste_ts = groep["tijdstip"].iloc[-1]
+
+        kwartier_start = pd.Timestamp(kwartier)
+        kwartier_eind  = kwartier_start + pd.Timedelta(minutes=15)
+
+        # Volledigheidscheck: begin en einde van het kwartier moeten gedekt zijn
+        start_gap = (eerste_ts - kwartier_start).total_seconds()
+        eind_gap  = (kwartier_eind - laatste_ts).total_seconds()
+
+        if start_gap > _MAX_START_GAP_S or eind_gap > _MAX_EIND_GAP_S:
+            continue
+
+        rijen.append({
+            "kwartier":       kwartier_start,
+            # Gemiddeld vermogen over alle seconden in het kwartier
+            "bat_laden_kw":   round(groep["bat_laden_kw"].mean(),    4),
+            "bat_ontladen_kw":round(groep["bat_ontladen_kw"].mean(), 4),
+            "afname_kw":      round(groep["afname_kw"].mean(),       4),
+            "terugave_kw":    round(groep["terugave_kw"].mean(),     4),
+            # SOC aan begin en einde van het kwartier
+            "soc_begin":      groep["soc"].iloc[0],
+            "soc_eind":       groep["soc"].iloc[-1],
+            "n_seconden":     len(groep),
+        })
+
+    df_kwartier = pd.DataFrame(rijen)
+
+    FINAL_DIR.mkdir(parents=True, exist_ok=True)
+    df_kwartier.to_csv(output_file, index=False, date_format="%Y-%m-%d %H:%M:%S")
+
+    return df_kwartier, output_file
 
 
 def laad() -> pd.DataFrame:

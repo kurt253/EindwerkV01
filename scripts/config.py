@@ -87,6 +87,7 @@ SOLARCHARGE_DIR = SOURCE_DIR / "Solarcharge"
 WEATHER_CSV   = Path(os.environ["WEATHER_CSV"])
 
 INTERMEDIATE_DIR = DATA_DIR / "intermediate results"
+FINAL_DIR        = DATA_DIR / "Final"
 
 
 # ── API ───────────────────────────────────────────────────────────────────
