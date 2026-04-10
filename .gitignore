@@ -1,7 +1,5 @@
 
-# Notebooks — enkel data_voorbereiding.ipynb in repo; rest genegeerd
-notebooks/*.ipynb
-!notebooks/data_voorbereiding.ipynb
+
 
 # Source data en intermediate results (grote bestanden, niet in repo)
 Data/

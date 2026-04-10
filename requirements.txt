@@ -1,8 +1,13 @@
 streamlit
 pandas
 matplotlib
+numpy
 requests
 python-dotenv
 keyring
 openpyxl
 pvlib
+scipy
+plotly
+ipywidgets
+jupyter
