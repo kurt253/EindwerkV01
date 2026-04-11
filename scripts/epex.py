@@ -1,27 +1,28 @@
 """
 epex.py
 =======
-Ophalen en cachen van EPEX SPOT Belgium dag-vooruit prijzen (€/MWh, uurlijks)
-via de ENTSO-E Transparency Platform REST API.
+Importeert EPEX SPOT Belgium dag-vooruit-prijzen (€/MWh, uurlijks) vanuit
+het lokale Excel-bronbestand en cachet ze als CSV tussenresultaat.
 
-VEREISTEN
----------
-Een gratis ENTSO-E API-sleutel opgeslagen in de Windows Credential Manager:
+BRONBESTAND
+-----------
+    data/Source Data/epex.xlsx
 
-    python -c "import keyring; keyring.set_password('V1Eindwerk', 'entso_api_key', '<sleutel>')"
-
-API-sleutel aanvragen via https://transparency.entsoe.eu/
-(gratis na registratie — sleutel direct beschikbaar in het dashboard)
+    Kolommen:
+        Date   object   datum als "DD/MM/YYYY"
+        Time   object   uur als "Xu"  (bv. "0u" = 00:00, "23u" = 23:00)
+                        in Belgische lokale tijd (Europe/Brussels)
+        Euro   float    dag-vooruit-prijs in €/MWh
 
 GEBRUIK
 -------
-    from scripts.epex import load, fetch_and_save
+    from scripts.epex import load, importeer_xlsx
 
-    # Gecachede prijzen inladen (of leeg DataFrame als nog niet opgehaald)
+    # Importeer xlsx → epex_be.csv (enkel als nodig)
+    df = importeer_xlsx()
+
+    # Gecachede prijzen inladen
     df = load()
-
-    # Prijzen ophalen/vernieuwen van ENTSO-E API
-    df = fetch_and_save(start='2024-11-01', end='2026-04-06')
 
 OUTPUTFORMAAT
 -------------
@@ -31,193 +32,171 @@ DataFrame geïndexeerd op 'tijdstip' (tz-aware Europe/Brussels, uurlijks):
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
-import requests
 
-from scripts.config import INTERMEDIATE_DIR
+from scripts.config import INTERMEDIATE_DIR, SOURCE_DIR
 
-CACHE_FILE: Path = INTERMEDIATE_DIR / "epex_be.csv"
-_ENTSO_URL = "https://web-api.tp.entsoe.eu/api"
-_BE_ZONE = "10YBE----------2"
+CACHE_FILE:   Path = INTERMEDIATE_DIR / "epex_be.csv"
+XLSX_SOURCE:  Path = SOURCE_DIR / "epex.xlsx"
 
 
-def _api_key() -> str:
-    import keyring
+# ─────────────────────────────────────────────────────────────────────────────
+#  Excel-import
+# ─────────────────────────────────────────────────────────────────────────────
 
-    key = keyring.get_password("V1Eindwerk", "entso_api_key")
-    if not key:
-        raise RuntimeError(
-            "ENTSO-E API-sleutel niet gevonden in Windows Credential Manager.\n"
-            "Sla de sleutel op via:\n"
-            "  python -c \"import keyring; keyring.set_password("
-            "'V1Eindwerk', 'entso_api_key', '<sleutel>')\"\n"
-            "Sleutel aanvragen op: https://transparency.entsoe.eu/"
-        )
-    return key
-
-
-def _parse_xml(xml_text: str) -> pd.Series:
-    """
-    Parseer de ENTSO-E XML-respons voor documentType A44 (Day-Ahead Prices).
-
-    Returns:
-        pd.Series: index = tz-aware timestamps (UTC), values = €/MWh.
-    """
-    # Detecteer namespace automatisch uit de root-tag
-    try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError as exc:
-        raise ValueError(f"Ongeldige XML ontvangen: {exc}") from exc
-
-    # Namespace kan variëren — haal op uit root-tag
-    ns_uri = ""
-    if root.tag.startswith("{"):
-        ns_uri = root.tag[1: root.tag.index("}")]
-    ns = {"ns": ns_uri} if ns_uri else {}
-
-    def tag(name: str) -> str:
-        return f"{{ns}}{name}" if not ns_uri else f"{{{ns_uri}}}{name}"
-
-    records: dict[datetime, float] = {}
-
-    for ts_elem in root.iter(tag("TimeSeries")):
-        for period in ts_elem.iter(tag("Period")):
-            start_node = period.find(f".//{tag('start')}")
-            res_node   = period.find(tag("resolution"))
-            if start_node is None or res_node is None:
-                continue
-            if res_node.text != "PT60M":
-                continue  # alleen uurlijkse resolutie
-
-            ts_start = datetime.fromisoformat(
-                start_node.text.replace("Z", "+00:00")
-            )
-
-            for pt in period.iter(tag("Point")):
-                pos_node   = pt.find(tag("position"))
-                price_node = pt.find(tag("price.amount"))
-                if pos_node is None or price_node is None:
-                    continue
-                try:
-                    pos   = int(pos_node.text)
-                    price = float(price_node.text)
-                except (ValueError, TypeError):
-                    continue
-                ts = ts_start + timedelta(hours=pos - 1)
-                records[ts] = price
-
-    if not records:
-        return pd.Series(dtype=float, name="price_eur_mwh")
-
-    series = pd.Series(records, name="price_eur_mwh")
-    series.index = pd.to_datetime(series.index, utc=True)
-    series.index.name = "tijdstip"
-    return series.sort_index()
-
-
-def _fetch_chunk(api_key: str, start: datetime, end: datetime) -> pd.Series:
-    """Haal maximaal 1 jaar EPEX-prijzen op via ENTSO-E API."""
-    params = {
-        "securityToken": api_key,
-        "documentType":  "A44",
-        "in_Domain":     _BE_ZONE,
-        "out_Domain":    _BE_ZONE,
-        "periodStart":   start.strftime("%Y%m%d%H%M"),
-        "periodEnd":     end.strftime("%Y%m%d%H%M"),
-    }
-    resp = requests.get(_ENTSO_URL, params=params, timeout=60)
-    resp.raise_for_status()
-    return _parse_xml(resp.text)
-
-
-def fetch_and_save(
-    start: str,
-    end: str,
+def importeer_xlsx(
+    xlsx_file: Path | None = None,
     cache_file: Path | None = None,
+    force: bool = False,
 ) -> pd.DataFrame:
     """
-    Haal EPEX BE dag-vooruit prijzen op via de ENTSO-E API en sla ze op.
+    Leest de EPEX-prijzen uit het lokale Excel-bronbestand en slaat ze op
+    als ``epex_be.csv`` in de intermediate results-map.
 
-    Bestaande gecachede data wordt bewaard; enkel ontbrekende periodes
-    worden opgehaald (incrementeel bijwerken).
+    Slimme bijwerkdetectie
+    ----------------------
+    De import wordt alleen uitgevoerd als:
+      - ``epex_be.csv`` nog niet bestaat, OF
+      - ``epex.xlsx`` recenter gewijzigd is dan ``epex_be.csv``, OF
+      - ``force=True``.
 
-    Args:
-        start (str): Startdatum "YYYY-MM-DD".
-        end   (str): Einddatum "YYYY-MM-DD" (inclusief).
-        cache_file (Path|None): Uitvoerpad; standaard CACHE_FILE.
+    Parameters
+    ----------
+    xlsx_file : Path | None
+        Pad naar het Excel-bronbestand. Standaard ``data/Source Data/epex.xlsx``.
+    cache_file : Path | None
+        Uitvoerpad voor de CSV-cache. Standaard ``data/intermediate results/epex_be.csv``.
+    force : bool
+        Als True: altijd opnieuw importeren, ook als de cache actueel is.
 
-    Returns:
-        pd.DataFrame: Geïndexeerd op 'tijdstip' (tz-aware Europe/Brussels)
-                      met kolom 'price_eur_mwh'.
+    Returns
+    -------
+    pd.DataFrame
+        Index: 'tijdstip' (tz-aware Europe/Brussels, uurlijks, oplopend).
+        Kolom: 'price_eur_mwh' (€/MWh).
+
+    Raises
+    ------
+    FileNotFoundError
+        Als epex.xlsx niet gevonden wordt.
+    ValueError
+        Als het Excel-bestand geen herkende kolommen bevat.
     """
+    xlsx_file  = xlsx_file  or XLSX_SOURCE
     cache_file = cache_file or CACHE_FILE
     INTERMEDIATE_DIR.mkdir(parents=True, exist_ok=True)
-    api_key = _api_key()
 
-    dt_start = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
-    dt_end   = (datetime.fromisoformat(end)
-                + timedelta(days=1)).replace(tzinfo=timezone.utc)
-
-    # Laad bestaande cache
-    if cache_file.exists():
-        df_cache = pd.read_csv(cache_file, index_col="tijdstip", parse_dates=True)
-        df_cache.index = pd.to_datetime(df_cache.index, utc=True)
-    else:
-        df_cache = pd.DataFrame(
-            columns=["price_eur_mwh"],
-            index=pd.DatetimeIndex([], tz="UTC", name="tijdstip"),
+    if not xlsx_file.exists():
+        raise FileNotFoundError(
+            f"EPEX-bronbestand niet gevonden: {xlsx_file}\n"
+            "Zorg dat 'epex.xlsx' aanwezig is in 'data/Source Data/'."
         )
 
-    # Haal ontbrekende stukken op (max 1 jaar per request)
-    nieuwe_stukken: list[pd.Series] = []
-    chunk_start = dt_start
-    while chunk_start < dt_end:
-        chunk_end = min(
-            chunk_start + timedelta(days=365),
-            dt_end,
-        )
-        # Tel gecachede uren in dit venster
-        mask = (df_cache.index >= pd.Timestamp(chunk_start)) & (
-            df_cache.index < pd.Timestamp(chunk_end)
-        )
-        verwacht = int((chunk_end - chunk_start).total_seconds() / 3600)
-        if mask.sum() < verwacht * 0.95:
+    # Bijwerkdetectie op basis van bestandstijdstempels
+    if not force and cache_file.exists():
+        if cache_file.stat().st_mtime >= xlsx_file.stat().st_mtime:
             print(
-                f"  ENTSO-E: ophalen "
-                f"{chunk_start.date()} \u2192 {chunk_end.date()} ..."
+                f"EPEX-cache is actueel ({cache_file.name}). "
+                "Gebruik force=True om toch opnieuw te importeren."
             )
-            stuk = _fetch_chunk(api_key, chunk_start, chunk_end)
-            if not stuk.empty:
-                nieuwe_stukken.append(stuk)
-        chunk_start = chunk_end
+            return load(cache_file)
 
-    if not nieuwe_stukken:
-        df_result = df_cache
-    else:
-        df_nieuw = pd.concat(nieuwe_stukken).to_frame()
-        df_result = pd.concat(
-            [df_cache[~df_cache.index.isin(df_nieuw.index)], df_nieuw]
-        ).sort_index()
-        df_result.to_csv(cache_file)
+    # ── Inlezen ──────────────────────────────────────────────────────────────
+    df_raw = pd.read_excel(xlsx_file)
 
-    # Zet om naar Europe/Brussels voor gebruik in notebook
-    if not df_result.empty and df_result.index.tz is not None:
-        df_result.index = df_result.index.tz_convert("Europe/Brussels")
+    # Normaliseer kolomnamen (hoofdletterongevoelig)
+    df_raw.columns = [c.strip().lower() for c in df_raw.columns]
+    rename_map = {}
+    for col in df_raw.columns:
+        if col in ("date", "datum"):
+            rename_map[col] = "date"
+        elif col in ("time", "tijd", "hour", "uur"):
+            rename_map[col] = "time"
+        elif col in ("euro", "price", "prijs", "price_eur_mwh"):
+            rename_map[col] = "euro"
+    df_raw = df_raw.rename(columns=rename_map)
 
-    return df_result
+    vereist = {"date", "time", "euro"}
+    ontbrekend = vereist - set(df_raw.columns)
+    if ontbrekend:
+        raise ValueError(
+            f"Verwachte kolommen ontbreken in {xlsx_file.name}: {ontbrekend}\n"
+            f"Aanwezige kolommen: {list(df_raw.columns)}"
+        )
 
+    # ── Tijdstempel opbouwen ─────────────────────────────────────────────────
+    # Time-formaat: "Xu" waarbij X het uur is in Belgische lokale tijd.
+    # Bv. "0u" = 00:00, "23u" = 23:00.
+    uur_str = df_raw["time"].astype(str).str.strip().str.replace("u", "", regex=False)
+    datum_str = df_raw["date"].astype(str).str.strip()
+
+    # Combineer naar datetime-string "DD/MM/YYYY HH:00" en parseer
+    dt_str = datum_str + " " + uur_str.str.zfill(2) + ":00"
+    tijdstip_naive = pd.to_datetime(dt_str, format="%d/%m/%Y %H:%M", errors="coerce")
+
+    # Controleer op niet-parseerbare waarden
+    n_null = tijdstip_naive.isna().sum()
+    if n_null > 0:
+        print(f"  Waarschuwing: {n_null} tijdstempels konden niet worden geparseerd en worden overgeslagen.")
+
+    df = pd.DataFrame({
+        "tijdstip": tijdstip_naive,
+        "price_eur_mwh": pd.to_numeric(df_raw["euro"], errors="coerce"),
+    }).dropna()
+
+    # Sorteren voor correcte DST-afhandeling (tz_localize vereist monotoon stijgende reeks)
+    df = df.sort_values("tijdstip").reset_index(drop=True)
+
+    # Lokaliseer naar Europe/Brussels
+    # ambiguous='infer': bij winteruur-overgang (25 uur) wordt de volgorde gebruikt
+    #                    om te onderscheiden welk uur voor/na de terugzetting is.
+    # nonexistent='shift_forward': bij zomeruurovergang (23 uur) bestaat 02:00
+    #                               niet; verschuif naar 03:00.
+    df["tijdstip"] = df["tijdstip"].dt.tz_localize(
+        "Europe/Brussels",
+        ambiguous="infer",
+        nonexistent="shift_forward",
+    )
+    df = df.set_index("tijdstip").sort_index()
+    df.index.name = "tijdstip"
+
+    # Verwijder duplicaten (mogen niet voorkomen, maar als veiligheidsmaatregel)
+    df = df[~df.index.duplicated(keep="last")]
+
+    # ── Opslaan ──────────────────────────────────────────────────────────────
+    df_opslaan = df.copy()
+    df_opslaan.index = df_opslaan.index.tz_convert("UTC")
+    df_opslaan.index.name = "tijdstip"
+    df_opslaan.to_csv(cache_file)
+
+    print(
+        f"EPEX-cache aangemaakt: {cache_file.name}\n"
+        f"  {len(df)} uren over "
+        f"{df.index.normalize().nunique()} dagen\n"
+        f"  Bereik  : {df.index.min().date()} \u2192 {df.index.max().date()}\n"
+        f"  Gem.    : {df['price_eur_mwh'].mean():.2f} \u20ac/MWh\n"
+        f"  Min.    : {df['price_eur_mwh'].min():.2f} \u20ac/MWh\n"
+        f"  Max.    : {df['price_eur_mwh'].max():.2f} \u20ac/MWh"
+    )
+    return df
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Inlaadfunctie
+# ─────────────────────────────────────────────────────────────────────────────
 
 def load(cache_file: Path | None = None) -> pd.DataFrame:
     """
-    Lees de gecachede EPEX-prijzen in.
+    Lees de gecachede EPEX-uurprijzen in vanuit ``epex_be.csv``.
 
-    Returns:
-        pd.DataFrame: Geïndexeerd op 'tijdstip' (tz-aware Europe/Brussels)
-                      met kolom 'price_eur_mwh'. Leeg als cache ontbreekt.
+    Returns
+    -------
+    pd.DataFrame
+        Index: 'tijdstip' (tz-aware Europe/Brussels, uurlijks).
+        Kolom: 'price_eur_mwh' (€/MWh).
+        Leeg DataFrame als het cachebestand niet bestaat.
     """
     cache_file = cache_file or CACHE_FILE
     if not cache_file.exists():

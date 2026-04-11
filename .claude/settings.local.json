@@ -13,7 +13,9 @@
       "Bash(python3 -c ':*)",
       "Bash(python -c ':*)",
       "Bash(python -c \"import scripts.overall; print\\('OK:', [x for x in dir\\(scripts.overall\\) if not x.startswith\\('_'\\)]\\)\")",
-      "Bash(python -c \"import scripts.overall; print\\('OK'\\)\")"
+      "Bash(python -c \"import scripts.overall; print\\('OK'\\)\")",
+      "Bash(python)",
+      "Bash(python _patch_tariefvergelijking.py)"
     ],
     "defaultMode": "plan",
     "additionalDirectories": [
