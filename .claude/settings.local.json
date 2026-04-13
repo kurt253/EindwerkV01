@@ -15,7 +15,14 @@
       "Bash(python -c \"import scripts.overall; print\\('OK:', [x for x in dir\\(scripts.overall\\) if not x.startswith\\('_'\\)]\\)\")",
       "Bash(python -c \"import scripts.overall; print\\('OK'\\)\")",
       "Bash(python)",
-      "Bash(python _patch_tariefvergelijking.py)"
+      "Bash(python _patch_tariefvergelijking.py)",
+      "Bash(python add_section6.py)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(del add_section6.py)",
+      "Bash(python rewrite_sect6.py)",
+      "Bash(rm rewrite_sect6.py)",
+      "Bash(python rewrite_sect6b.py)",
+      "Bash(rm rewrite_sect6b.py)"
     ],
     "defaultMode": "plan",
     "additionalDirectories": [
